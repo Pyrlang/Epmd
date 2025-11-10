@@ -11,9 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import time
 import asyncio
 import logging
-from struct import unpack
+
+from struct import pack, unpack
 
 from epmd.errors import EpmdError
 
@@ -57,6 +59,7 @@ class EpmdProtocol(asyncio.Protocol):
         LOG.info("Incoming from %s", self.addr_)
 
     def data_received(self, data: bytes) -> None:
+        LOG.info("Data received from %s: %s", self.addr_, data)
         self.unconsumed_data_ += data
         if len(self.unconsumed_data_) < 2:
             # Not even length is read yet
@@ -112,6 +115,10 @@ class EpmdProtocol(asyncio.Protocol):
         }
         LOG.info("New node: {} = {}".format(node_name, node_record))
         self.parent_.register(node_name, node_record)
+        #ALIVE2_X_RESP
+        # 1     1       2
+        # 121	Result	Creation
+        self.transport_.write(pack(">BBH", EPMD_ALIVE2_RESP, 0, int(time.time()) % 65536))
 
     def _epmd_port_please(self, packet):
         LOG.debug("Incoming PORT2_REQ")
