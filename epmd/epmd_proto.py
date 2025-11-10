@@ -91,7 +91,7 @@ class EpmdProtocol(asyncio.Protocol):
             raise EpmdError(
                 msg="ALIVE2_REQ coming not from a local address %s" % self.addr_
             )
-        if len(packet) < 13:
+        if len(packet) < 11:
             # Assume that node name is at least 1 letter
             raise EpmdError(msg="ALIVE2_REQ too short")
         # 1     2       1           1           2           2       2
@@ -100,10 +100,10 @@ class EpmdProtocol(asyncio.Protocol):
         # Nlen        2       Elen
         # NodeName    Elen    Extra
         (port, node_type, proto, hi_ver, lo_ver, n_len) = unpack(
-            ">HBBHHH", packet[3:13]
+            ">HBBHHH", packet[1:11]
         )
-        node_name = packet[13:(13 + n_len)]
-        packet = packet[(13 + n_len):]
+        node_name = packet[11:(11 + n_len)]
+        packet = packet[(11 + n_len):]
         extra = packet[2:]
 
         node_record = {
