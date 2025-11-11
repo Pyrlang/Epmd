@@ -122,7 +122,7 @@ class EpmdProtocol(asyncio.Protocol):
         # ALIVE2_X_RESP
         # 1     1       2
         # 121	Result	Creation
-        response = pack("BBH", EPMD_ALIVE2_RESP, 0, int(time.time()) % 65536)
+        response = pack(">BBH", EPMD_ALIVE2_RESP, 0, int(time.time()) % 65536)
         print("Sending register response:", response)
         self.transport_.write(response)
 
@@ -136,7 +136,7 @@ class EpmdProtocol(asyncio.Protocol):
         if node is not None:
             LOG.info("Found node_name={} {}".format(node_name, node))
             response = pack(
-                f"BBHBBHHH{len(node_name)}sH0s",
+                f">BBHBBHHH{len(node_name)}sH0s",
                 EPMD_PORT2_RESP,
                 0,
                 node["port"],
@@ -149,13 +149,10 @@ class EpmdProtocol(asyncio.Protocol):
                 0,
                 b"",
             )
-            print("Sending port response:", response)
-            self.transport_.write(response)
         else:
             response = pack(">BB", EPMD_PORT2_RESP, 1)
-            print("Sending port response:", response)
-            self.transport_.write(response)
-        LOG.debug("node_name={} {}".format(node_name, node))
+        print("Sending port response:", response)
+        self.transport_.write(response)
 
 
 __all__ = ["EpmdProtocol"]
