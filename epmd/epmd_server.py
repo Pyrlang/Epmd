@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import logging
+
 from typing import Dict
 
 from epmd.epmd_proto import EpmdProtocol
@@ -47,6 +48,7 @@ class Epmd:
             await server.serve_forever()
 
     def register(self, node_name: bytes, data: dict):
+        LOG.info("Registering node_name={}".format(node_name))
         self.nodes_[node_name] = data
 
     def unregister(self, node_name: bytes):
