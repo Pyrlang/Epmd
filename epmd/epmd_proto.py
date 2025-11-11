@@ -123,13 +123,12 @@ class EpmdProtocol(asyncio.Protocol):
         # 1     1       2
         # 121	Result	Creation
         response = pack(">BBH", EPMD_ALIVE2_RESP, 0, int(time.time()) % 65536)
-        print("Sending register response:", response)
         self.transport_.write(response)
 
     def _epmd_port_please(self, packet):
         LOG.debug("Incoming PORT2_REQ")
         node_name = packet[1:]
-        LOG.info("Looking for node_name={}".format(node_name))
+        LOG.info("PORT2_REQ for node name: {}".format(node_name))
         node = self.parent_.nodes_.get(node_name, None)
         # 1     1	    2	    1	        1	        2 	            2	            2	    Nlen	    2	    Elen
         # 119	Result	PortNo	NodeType	Protocol	HighestVersion	LowestVersion	Nlen	NodeName	Elen	>Extra
@@ -151,8 +150,8 @@ class EpmdProtocol(asyncio.Protocol):
             )
         else:
             response = pack(">BB", EPMD_PORT2_RESP, 1)
-        print("Sending port response:", response)
         self.transport_.write(response)
+        self.transport_.close()
 
 
 __all__ = ["EpmdProtocol"]
