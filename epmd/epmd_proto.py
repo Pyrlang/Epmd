@@ -11,144 +11,191 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import sys
 import time
 import asyncio
 import logging
 
-from struct import pack, unpack
+from typing import TYPE_CHECKING
 
-from epmd.errors import EpmdError
+from epmd.epmd_node import EpmdNode
+
+if TYPE_CHECKING:
+    from epmd.epmd_server import Epmd
+
+from struct import unpack
+
+from epmd.epmd_proto_packets import (
+    EpmdAliveReqPacket,
+    EpmdAliveRespPacket,
+    EpmdDumpRespPacket,
+    EpmdPortPleaseErrorPacket,
+    EpmdPortPleaseRespPacket,
+    EpmdNamesRespPacket,
+)
 
 logger = logging.getLogger("epmd.server")
-logger.setLevel(logging.INFO)
-
-# Registration and queries
-EPMD_ALIVE2_REQ = ord("x")  # 120
-EPMD_PORT2_REQ = ord("z")  # 122
-EPMD_ALIVE2_RESP = ord("y")  # 121
-EPMD_PORT2_RESP = ord("w")  # 119
-EPMD_NAMES_REQ = ord("n")
-
-# Interactive client command codes
-EPMD_DUMP_REQ = ord("d")
-EPMD_KILL_REQ = ord("k")
-EPMD_STOP_REQ = ord("s")
+logger.setLevel(logging.DEBUG)
 
 
 class EpmdProtocol(asyncio.Protocol):
     """Implements EPMD server protocol, used for Erlang node discovery"""
 
+    EPMD_ALIVE2_REQ = 120
+    EPMD_PORT_PLEASE2_REQ = 122
+    EPMD_NAMES_REQ = 110
+    EPMD_KILL_REQ = 107
+    EPMD_DUMP_REQ = 100
+    EPMD_STOP_REQ = 115
+
+    ALIVE_NORMAL_NODE_TYPE = 77  # M: normal Erlang node
+    ALIVE_HIDDEN_NODE_TYPE = 72  # H: hidden node
+
     def __init__(self, parent):
-        self.parent_ = parent
-        self.transport_ = None
-        self.addr_ = None
-        self.unconsumed_data_ = b""
+        self.parent: Epmd = parent
+        self.transport = None
+        self.addr = None
+        self.unconsumed_data = b""
+        self.node_name = b""
 
     def connection_lost(self, exc):
-        logger.info("Disconnected %s", self.addr_)
-        self.parent_.client_disconnect(self)
+        logger.info("Disconnected %s", self.addr)
+        if len(self.node_name) > 0:
+            self.parent.unregister(self.node_name)
 
     def connection_made(self, transport: asyncio.Transport):
         """Connection has been accepted and established (callback)."""
         sock = transport.get_extra_info("socket")
-        self.transport_ = transport
-        self.addr_ = sock.getpeername()
-        logger.info("Incoming from %s", self.addr_)
+        self.transport = transport
+        self.addr = sock.getpeername()
+        logger.info("Incoming from %s", self.addr)
+        self.unconsumed_data = b""
 
     def data_received(self, data: bytes) -> None:
-        logger.info("Data received from %s: %s", self.addr_, data)
-        self.unconsumed_data_ += data
-        if len(self.unconsumed_data_) < 2:
+        logger.info("Data received from %s: %s", self.addr, data)
+        self.unconsumed_data += data
+
+        # Each request *_REQ is preceded by a 2 byte length field. Thus, the overall
+        # request format is:
+        # len_bytes:uint16 + request[len_bytes]
+        if len(self.unconsumed_data) < 2:
             # Not even length is read yet
             return
 
-        (packet_len,) = unpack(">H", self.unconsumed_data_[:2])
+        (packet_len,) = unpack(">H", self.unconsumed_data[:2])
 
-        if len(self.unconsumed_data_) < packet_len + 2:
+        if len(self.unconsumed_data) < packet_len + 2:
             # Not ready yet, keep reading
             return
 
-        # extract
-        packet = self.unconsumed_data_[2 : (2 + packet_len)]
+        # extract packet body
+        packet = self.unconsumed_data[2 : (2 + packet_len)]
 
-        # trim
-        self.unconsumed_data_ = self.unconsumed_data_[(2 + packet_len) :]
+        # trim the accumulated data
+        self.unconsumed_data = self.unconsumed_data[(2 + packet_len) :]
 
-        # handle
+        # handle the packet
         self.on_packet(packet)
 
     def on_packet(self, packet: bytes):
-        if packet[0] == EPMD_ALIVE2_REQ:
-            return self._epmd_register(packet)
-        elif packet[0] == EPMD_PORT2_REQ:
-            return self._epmd_port_please(packet)
+        if packet[0] == EpmdProtocol.EPMD_ALIVE2_REQ:
+            return self._on_packet_EPMD_ALIVE2_REQ(packet)
+        elif packet[0] == EpmdProtocol.EPMD_PORT_PLEASE2_REQ:
+            return self._on_packet_EPMD_PORT_PLEASE2_REQ(packet)
+        elif packet[0] == EpmdProtocol.EPMD_NAMES_REQ:
+            return self._on_packet_EPMD_NAMES_REQ(packet)
+        elif packet[0] == EpmdProtocol.EPMD_KILL_REQ:
+            return self._on_packet_EPMD_KILL_REQ(packet)
+        elif packet[0] == EpmdProtocol.EPMD_DUMP_REQ:
+            return self._on_packet_EPMD_DUMP_REQ(packet)
+        elif packet[0] == EpmdProtocol.EPMD_STOP_REQ:
+            return self._on_packet_EPMD_STOP_REQ(packet)
 
-        LOG.error("Unknown packet %d", packet[0])
+        logger.error("Unknown packet %d", packet[0])
 
-    def _epmd_register(self, packet):
-        LOG.debug("Incoming ALIVE2_REQ")
-        if self.addr_[0] not in ["127.0.0.1", "localhost"]:
-            raise EpmdError(
-                msg="ALIVE2_REQ coming not from a local address %s" % self.addr_
-            )
-        if len(packet) < 11:
-            # Assume that node name is at least 1 letter
-            raise EpmdError(msg="ALIVE2_REQ too short")
-        # 1     2       1           1           2           2       2
-        # 120   PortNo  NodeType    Protocol    HighestV    LowestV Nlen
-        # --------------------------
-        # Nlen        2       Elen
-        # NodeName    Elen    Extra
-        (port, node_type, proto, hi_ver, lo_ver, n_len) = unpack(
-            ">HBBHHH", packet[1:11]
+    def _on_packet_EPMD_ALIVE2_REQ(self, payload: bytes):
+        """Handle the ALIVE2_REQ packet."""
+        logger.debug("Incoming ALIVE2_REQ")
+        packet = EpmdAliveReqPacket(self.addr, payload)
+
+        node = EpmdNode(
+            node_name=packet.node_name,
+            port=packet.port,
+            node_type=packet.node_type,
+            proto=packet.proto,
+            hi_ver=packet.hi_ver,
+            lo_ver=packet.lo_ver,
         )
-        node_name = packet[11 : (11 + n_len)]
-        packet = packet[(11 + n_len) :]
-        extra = packet[2:]
+        logger.info("New node: {} = {}".format(packet.node_name, node))
 
-        node_record = {
-            "port": port,
-            "node_type": node_type,
-            "proto": proto,
-            "hi_ver": hi_ver,
-            "lo_ver": lo_ver,
-            "n_len": n_len,
-            "extra": extra,
-        }
-        logger.info("New node: {} = {}".format(node_name, node_record))
-        self.parent_.register(node_name, node_record)
-        # ALIVE2_X_RESP
-        # 1     1       2
-        # 121	Result	Creation
-        response = pack(">BBH", EPMD_ALIVE2_RESP, 0, int(time.time()) % 65536)
-        self.transport_.write(response)
+        self.node_name = packet.node_name  # remember the node name for later
+        self.supports_protocol_6 = packet.hi_ver >= 6
 
-    def _epmd_port_please(self, packet):
-        logger.debug("Incoming PORT2_REQ")
-        node_name = packet[1:]
-        logger.info("PORT2_REQ for node name: {}".format(node_name))
-        node = self.parent_.nodes_.get(node_name, None)
-        # 1     1	    2	    1	        1	        2 	            2	            2	    Nlen	    2	    Elen
-        # 119	Result	PortNo	NodeType	Protocol	HighestVersion	LowestVersion	Nlen	NodeName	Elen	>Extra
-        if node is not None:
-            response = pack(
-                f">BBHBBHHH{len(node_name)}sH0s",
-                EPMD_PORT2_RESP,
-                0,
-                node["port"],
-                node["node_type"],
-                node["proto"],
-                node["hi_ver"],
-                node["lo_ver"],
-                node["n_len"],
-                node_name,
-                0,
-                b"",
+        if self.parent.register(packet.node_name, node):
+            response = EpmdAliveRespPacket(
+                success=True,
+                creation=int(time.time()),
+                use32bit=self.parent.supports_protocol_6 and self.supports_protocol_6,
             )
+            self.transport.write(response.data)
         else:
-            response = pack(">BB", EPMD_PORT2_RESP, 1)
-        self.transport_.write(response)
-        self.transport_.close()
+            response = EpmdAliveRespPacket(
+                success=False,
+                creation=99,  # as in the source of https://github.com/erlang/epmd/blob/master/src/epmd_srv.erl
+                use32bit=self.parent.supports_protocol_6 and self.supports_protocol_6,
+            )
+            self.transport.write(response.data)
+
+    def _on_packet_EPMD_PORT_PLEASE2_REQ(self, payload: bytes):
+        """Handle the PORT_PLEASE2_REQ packet."""
+        logger.debug("Incoming PORT_PLEASE2_REQ")
+        node_name = payload[1:]
+        logger.info("PORT_PLEASE2_REQ for node name: {}".format(node_name))
+        node = self.parent.nodes.get(node_name, None)
+
+        if node is not None:
+            response = EpmdPortPleaseRespPacket(node)
+        else:
+            response = EpmdPortPleaseErrorPacket()
+
+        self.transport.write(response.data)
+        self.transport.close()
+
+    def _on_packet_EPMD_NAMES_REQ(self, payload: bytes):
+        """Handle the NAMES_REQ packet. Return all registered node names."""
+        logger.debug("Incoming NAMES_REQ")
+        response = EpmdNamesRespPacket(
+            server_port=self.parent.port, nodes=self.parent.nodes
+        )
+        self.transport.write(response.data)
+        # When all NodeInfo has been written the connection is closed by the EPMD.
+        self.transport.close()
+
+    def _on_packet_EPMD_KILL_REQ(self, payload: bytes):
+        """Handle the KILL_REQ packet."""
+        logger.debug("Incoming KILL_REQ")
+        self.transport.write(b"OK")
+        self.transport.close()
+        sys.exit(0)
+
+    def _on_packet_EPMD_DUMP_REQ(self, payload: bytes):
+        """Handle the DUMP_REQ packet."""
+        logger.debug("Incoming DUMP_REQ")
+        response = EpmdDumpRespPacket(
+            server_port=self.parent.port, nodes=self.parent.nodes
+        )
+        self.transport.write(response.data)
+        # When all NodeInfo has been written the connection is closed by the EPMD.
+        self.transport.close()
+
+    def _on_packet_EPMD_STOP_REQ(self, payload: bytes):
+        """Handle the STOP_REQ packet."""
+        logger.debug("Incoming STOP_REQ")
+        node_name = payload[1:]
+        if self.parent.unregister(node_name):
+            self.transport.write(b"STOPPED")
+        else:
+            self.transport.write(b"NOEXIST")
 
 
 __all__ = ["EpmdProtocol"]

@@ -5,13 +5,14 @@ Currently the package is in development and can be installed by:
 pip install .
 ```
 
-## Usage
-Please check [test_script.py](test_script.py) for a quick usage detail. The script starts a `epmd` server written in this package and listens at the given port.
+## Give A Quick Try
+Please check [try_pyepmd.py](try_pyepmd.py) for a quick usage detail. The script starts a `epmd` server written in this package and listens at the given port.
 
 ```sh
 from epmd import Epmd
 
-server = Epmd(port=4370)    # starts python based epmd at port 4370
+# use a custom EPMD port to not interfere with a regular EPMD possibly running
+server = Epmd(port=4370) 
 asyncio.run(server.start_server())
 ```
 
@@ -39,3 +40,7 @@ Example:
     ```erl
     (a@127.0.0.1)1> net_adm:ping('b@127.0.0.1').
     ```
+
+## Ackhowledgements
+
+Thanks to Amit Garu (amitgaru2@gmail.com) for contributing the initial version of Epmd.

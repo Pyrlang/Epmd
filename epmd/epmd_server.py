@@ -14,9 +14,7 @@
 import asyncio
 import logging
 
-from typing import Dict
-
-from epmd.epmd_proto import EpmdProtocol
+from epmd.epmd_node import EpmdNode
 
 logger = logging.getLogger("epmd.server")
 logger.setLevel(logging.INFO)
@@ -28,33 +26,49 @@ class Epmd:
     Erlang nodes on this host.
     """
 
-    def __init__(self, host="0.0.0.0", port=4369):
-        self.port_ = port
-        self.host_ = host
-        self.nodes_: Dict[bytes, dict] = {}
+    EPMD_DEFAULT_PORT = 4369
+
+    def __init__(self, host="0.0.0.0", port=EPMD_DEFAULT_PORT):
+        self.port = port
+        self.host = host
+        self.nodes: dict[bytes, EpmdNode] = {}
+        # self.min_version = 5
+        # self.max_version = 6
+        self.supports_protocol_6 = True
 
     async def start_server(self):
         """Start listening. This is asynchronous and may fail if the port is
         used. The addrinuse result is not an error and it means that another
         EPMD is running already and it should be used.
         """
+        from epmd.epmd_proto import EpmdProtocol
+
         server = await asyncio.get_event_loop().create_server(
-            host=self.host_,
-            port=self.port_,
+            host=self.host,
+            port=self.port,
             protocol_factory=lambda: EpmdProtocol(parent=self),
         )
-        logger.info("Listening at %s:%d", self.host_, self.port_)
+        logger.info("Listening at %s:%d", self.host, self.port)
 
         async with server:
             await server.serve_forever()
 
-    def register(self, node_name: bytes, data: dict):
+    def register(self, node_name: bytes, data: dict) -> bool:
+        """Attempts to register a node. Returns True if successful, False if the node is already registered."""
+        if node_name in self.nodes:
+            logger.warning("Node {} already registered".format(node_name))
+            return False
         logger.info("Registering node_name={}".format(node_name))
-        self.nodes_[node_name] = data
+        self.nodes[node_name] = data
+        return True
 
-    def unregister(self, node_name: bytes):
-        if node_name in self.nodes_:
-            del self.nodes_[node_name]
-
-    def client_disconnect(self, protocol: EpmdProtocol):
-        pass
+    def unregister(self, node_name: bytes) -> bool:
+        """
+        Called from EpmdProtocol when a client disconnects or when a STOP command arrives
+        (documentation claims this is not used but still implemented).
+        Removes the node from the list of nodes.
+        """
+        if node_name in self.nodes:
+            del self.nodes[node_name]
+            return True
+        return False
