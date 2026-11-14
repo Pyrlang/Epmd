@@ -13,8 +13,12 @@
 # limitations under the License.
 import asyncio
 import logging
+from typing import TYPE_CHECKING, Optional
 
 from epmd.epmd_node import EpmdNode
+
+if TYPE_CHECKING:
+    from epmd.epmd_proto import EpmdProtocol
 
 logger = logging.getLogger("epmd.server")
 logger.setLevel(logging.INFO)
@@ -29,29 +33,68 @@ class Epmd:
     EPMD_DEFAULT_PORT = 4369
 
     def __init__(self, host: str = "0.0.0.0", port: int = EPMD_DEFAULT_PORT) -> None:
+        """:param port: port to listen on; 0 picks a free one (see ``start``)."""
         self.port = port
         self.host = host
         self.nodes: dict[bytes, EpmdNode] = {}
         # self.min_version = 5
         # self.max_version = 6
         self.supports_protocol_6 = True
+        # The listening server between start() and stop().
+        self._server: Optional[asyncio.Server] = None
+        # Open client connections, closed by stop(): Server.close() leaves
+        # them open before Python 3.13.
+        self._connections: set["EpmdProtocol"] = set()
 
-    async def start_server(self) -> None:
-        """Start listening. This is asynchronous and may fail if the port is
-        used. The addrinuse result is not an error and it means that another
-        EPMD is running already and it should be used.
+    async def start(self) -> None:
+        """Start listening and return once the socket listens.
+
+        Afterwards ``self.port`` is the bound port (useful with ``port=0``).
+
+        :raises OSError: the port is in use, typically by another EPMD.
         """
+        if self._server is not None:
+            return
         from epmd.epmd_proto import EpmdProtocol
 
-        server = await asyncio.get_event_loop().create_server(
+        self._server = await asyncio.get_running_loop().create_server(
             host=self.host,
             port=self.port,
             protocol_factory=lambda: EpmdProtocol(parent=self),
         )
+        self.port = self._server.sockets[0].getsockname()[1]
         logger.info("Listening at %s:%d", self.host, self.port)
 
-        async with server:
-            await server.serve_forever()
+    async def stop(self) -> None:
+        """Stop listening and close every client connection. Registered
+        nodes are forgotten. Calling it again, or before ``start``, is safe.
+        """
+        server, self._server = self._server, None
+        if server is None:
+            return
+        server.close()
+        for conn in list(self._connections):
+            conn.transport.close()
+        await server.wait_closed()
+        logger.info("Stopped listening at %s:%d", self.host, self.port)
+
+    async def start_server(self) -> None:
+        """Start listening and serve until cancelled; then stop.
+
+        :raises OSError: the port is in use, typically by another EPMD.
+        """
+        await self.start()
+        assert self._server is not None
+        try:
+            await self._server.serve_forever()
+        finally:
+            await self.stop()
+
+    def _connected(self, conn: "EpmdProtocol") -> None:
+        self._connections.add(conn)
+
+    def _disconnected(self, conn: "EpmdProtocol") -> None:
+        self._connections.discard(conn)
 
     def register(self, node_name: bytes, data: EpmdNode) -> bool:
         """Attempts to register a node. Returns True if successful, False if the node is already registered."""

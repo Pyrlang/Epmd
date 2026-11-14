@@ -16,6 +16,10 @@ server = Epmd(port=4370)
 asyncio.run(server.start_server())
 ```
 
+To run it next to other asyncio code, `await server.start()` returns once the
+server listens (`Epmd(port=0)` picks a free port, then `server.port` has it)
+and `await server.stop()` shuts it down.
+
 Now, use your erlang module with the custom epmd started (running at port 4370) above by:
 ```sh
 ERL_EPMD_PORT=<custom_epmd_port> erl -name <node_name>

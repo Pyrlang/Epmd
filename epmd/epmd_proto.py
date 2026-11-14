@@ -63,6 +63,7 @@ class EpmdProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         logger.info("Disconnected %s", self.addr)
+        self.parent._disconnected(self)
         if len(self.node_name) > 0:
             self.parent.unregister(self.node_name)
 
@@ -74,6 +75,7 @@ class EpmdProtocol(asyncio.Protocol):
         self.addr = sock.getpeername()
         logger.info("Incoming from %s", self.addr)
         self.unconsumed_data = b""
+        self.parent._connected(self)
 
     def data_received(self, data: bytes) -> None:
         logger.info("Data received from %s: %s", self.addr, data)
