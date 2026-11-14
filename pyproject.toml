@@ -1,0 +1,20 @@
+# Tool configuration only. Packaging still lives in setup.py until EPMD-01
+# moves it here; do not add [build-system] or [project] before that step.
+
+[tool.black]
+# The planned Python floor (decision 2 in .agents/00-plan.md).
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["epmd"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true

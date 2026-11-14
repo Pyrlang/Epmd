@@ -22,7 +22,7 @@ class EpmdNode:
         proto: int,
         hi_ver: int,
         lo_ver: int,
-    ):
+    ) -> None:
         self.node_name = node_name
         self.port = port
         self.node_type = node_type

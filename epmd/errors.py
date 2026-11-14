@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 LOG = logging.getLogger("epmd")
 
 
 class EpmdError(Exception):
-    def __init__(self, msg, *args, **kwargs):
+    # Extra arguments are passed through to Exception unchanged, hence Any.
+    def __init__(self, msg: str, *args: Any, **kwargs: Any) -> None:
         LOG.error("EPMD error: %s", msg)
         Exception.__init__(self, msg, *args, **kwargs)

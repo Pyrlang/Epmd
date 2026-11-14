@@ -28,7 +28,7 @@ class Epmd:
 
     EPMD_DEFAULT_PORT = 4369
 
-    def __init__(self, host="0.0.0.0", port=EPMD_DEFAULT_PORT):
+    def __init__(self, host: str = "0.0.0.0", port: int = EPMD_DEFAULT_PORT) -> None:
         self.port = port
         self.host = host
         self.nodes: dict[bytes, EpmdNode] = {}
@@ -36,7 +36,7 @@ class Epmd:
         # self.max_version = 6
         self.supports_protocol_6 = True
 
-    async def start_server(self):
+    async def start_server(self) -> None:
         """Start listening. This is asynchronous and may fail if the port is
         used. The addrinuse result is not an error and it means that another
         EPMD is running already and it should be used.
@@ -53,12 +53,12 @@ class Epmd:
         async with server:
             await server.serve_forever()
 
-    def register(self, node_name: bytes, data: dict) -> bool:
+    def register(self, node_name: bytes, data: EpmdNode) -> bool:
         """Attempts to register a node. Returns True if successful, False if the node is already registered."""
         if node_name in self.nodes:
-            logger.warning("Node {} already registered".format(node_name))
+            logger.warning("Node %r already registered", node_name)
             return False
-        logger.info("Registering node_name={}".format(node_name))
+        logger.info("Registering node_name=%r", node_name)
         self.nodes[node_name] = data
         return True
 

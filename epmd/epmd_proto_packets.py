@@ -14,6 +14,7 @@
 
 import logging
 from struct import pack, unpack
+from typing import Any
 
 from epmd.epmd_node import EpmdNode
 from epmd.errors import EpmdError
@@ -23,7 +24,9 @@ logger.setLevel(logging.DEBUG)
 
 
 class EpmdAliveReqPacket:
-    def __init__(self, self_addr: tuple, packet: bytes):
+    # self_addr is a socket.getpeername() result; its shape depends on the
+    # address family, hence Any.
+    def __init__(self, self_addr: tuple[Any, ...], packet: bytes) -> None:
         """
         Parse the bytes of the ALIVE2_REQ packet.
         """
@@ -69,7 +72,7 @@ class EpmdAliveRespPacket:
     EPMD_ALIVE2_RESP = 121  # 16-bit creation response for dist protocol 5
     EPMD_ALIVE2_X_RESP = 118  # 32-bit creation response for dist protocol 6+
 
-    def __init__(self, success: bool, creation: int, use32bit: bool):
+    def __init__(self, success: bool, creation: int, use32bit: bool) -> None:
         result = 0 if success else 1
         if use32bit:
             self.data = pack(
@@ -89,7 +92,7 @@ class EpmdPortPleaseRespPacket:
     def __init__(
         self,
         node: EpmdNode,
-    ):
+    ) -> None:
         self.data = (
             pack(
                 ">BBHBBHHH",
@@ -111,14 +114,14 @@ class EpmdPortPleaseErrorPacket:
 
     EPMD_PORT2_RESP = ord("w")  # 119
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.data = pack(">BB", EpmdPortPleaseErrorPacket.EPMD_PORT2_RESP, 1)
 
 
 class EpmdNamesRespPacket:
     """Responds to NAMES_REQ with a list of registered node names."""
 
-    def __init__(self, server_port: int, nodes: dict[bytes, EpmdNode]):
+    def __init__(self, server_port: int, nodes: dict[bytes, EpmdNode]) -> None:
         response_text = ""
         for node_name, node in nodes.items():
             # Each node is described by a string formatted like:
@@ -133,7 +136,7 @@ class EpmdNamesRespPacket:
 class EpmdDumpRespPacket:
     """Responds to DUMP_REQ with a list of registered node names."""
 
-    def __init__(self, server_port: int, nodes: dict[bytes, EpmdNode]):
+    def __init__(self, server_port: int, nodes: dict[bytes, EpmdNode]) -> None:
         response_text = ""
         for node_name, node in nodes.items():
             # io_lib:format("active name     ~ts at port ~p, fd = ~p~n", [NodeName, Port, Fd]).

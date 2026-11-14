@@ -15,7 +15,7 @@ import asyncio
 import logging
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from epmd.epmd_node import EpmdNode
 
@@ -50,19 +50,24 @@ class EpmdProtocol(asyncio.Protocol):
     ALIVE_NORMAL_NODE_TYPE = 77  # M: normal Erlang node
     ALIVE_HIDDEN_NODE_TYPE = 72  # H: hidden node
 
-    def __init__(self, parent):
+    def __init__(self, parent: "Epmd") -> None:
         self.parent: Epmd = parent
-        self.transport = None
-        self.addr = None
-        self.unconsumed_data = b""
-        self.node_name = b""
+        # asyncio calls connection_made before any data_received, so the
+        # handlers never see None here.
+        self.transport: asyncio.Transport = None  # type: ignore[assignment]  # set in connection_made
+        # Peer address from socket.getpeername(); its shape depends on the
+        # address family, hence Any.
+        self.addr: Any = None
+        self.unconsumed_data: bytes = b""
+        self.node_name: bytes = b""
 
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Optional[Exception]) -> None:
         logger.info("Disconnected %s", self.addr)
         if len(self.node_name) > 0:
             self.parent.unregister(self.node_name)
 
-    def connection_made(self, transport: asyncio.Transport):
+    # create_server always passes a stream Transport, not just a BaseTransport.
+    def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
         """Connection has been accepted and established (callback)."""
         sock = transport.get_extra_info("socket")
         self.transport = transport
@@ -96,7 +101,7 @@ class EpmdProtocol(asyncio.Protocol):
         # handle the packet
         self.on_packet(packet)
 
-    def on_packet(self, packet: bytes):
+    def on_packet(self, packet: bytes) -> None:
         if packet[0] == EpmdProtocol.EPMD_ALIVE2_REQ:
             return self._on_packet_EPMD_ALIVE2_REQ(packet)
         elif packet[0] == EpmdProtocol.EPMD_PORT_PLEASE2_REQ:
@@ -112,7 +117,7 @@ class EpmdProtocol(asyncio.Protocol):
 
         logger.error("Unknown packet %d", packet[0])
 
-    def _on_packet_EPMD_ALIVE2_REQ(self, payload: bytes):
+    def _on_packet_EPMD_ALIVE2_REQ(self, payload: bytes) -> None:
         """Handle the ALIVE2_REQ packet."""
         logger.debug("Incoming ALIVE2_REQ")
         packet = EpmdAliveReqPacket(self.addr, payload)
@@ -125,7 +130,7 @@ class EpmdProtocol(asyncio.Protocol):
             hi_ver=packet.hi_ver,
             lo_ver=packet.lo_ver,
         )
-        logger.info("New node: {} = {}".format(packet.node_name, node))
+        logger.info("New node: %r = %s", packet.node_name, node)
 
         self.node_name = packet.node_name  # remember the node name for later
         self.supports_protocol_6 = packet.hi_ver >= 6
@@ -145,13 +150,14 @@ class EpmdProtocol(asyncio.Protocol):
             )
             self.transport.write(response.data)
 
-    def _on_packet_EPMD_PORT_PLEASE2_REQ(self, payload: bytes):
+    def _on_packet_EPMD_PORT_PLEASE2_REQ(self, payload: bytes) -> None:
         """Handle the PORT_PLEASE2_REQ packet."""
         logger.debug("Incoming PORT_PLEASE2_REQ")
         node_name = payload[1:]
-        logger.info("PORT_PLEASE2_REQ for node name: {}".format(node_name))
+        logger.info("PORT_PLEASE2_REQ for node name: %r", node_name)
         node = self.parent.nodes.get(node_name, None)
 
+        response: EpmdPortPleaseRespPacket | EpmdPortPleaseErrorPacket
         if node is not None:
             response = EpmdPortPleaseRespPacket(node)
         else:
@@ -160,7 +166,7 @@ class EpmdProtocol(asyncio.Protocol):
         self.transport.write(response.data)
         self.transport.close()
 
-    def _on_packet_EPMD_NAMES_REQ(self, payload: bytes):
+    def _on_packet_EPMD_NAMES_REQ(self, payload: bytes) -> None:
         """Handle the NAMES_REQ packet. Return all registered node names."""
         logger.debug("Incoming NAMES_REQ")
         response = EpmdNamesRespPacket(
@@ -170,14 +176,14 @@ class EpmdProtocol(asyncio.Protocol):
         # When all NodeInfo has been written the connection is closed by the EPMD.
         self.transport.close()
 
-    def _on_packet_EPMD_KILL_REQ(self, payload: bytes):
+    def _on_packet_EPMD_KILL_REQ(self, payload: bytes) -> None:
         """Handle the KILL_REQ packet."""
         logger.debug("Incoming KILL_REQ")
         self.transport.write(b"OK")
         self.transport.close()
         sys.exit(0)
 
-    def _on_packet_EPMD_DUMP_REQ(self, payload: bytes):
+    def _on_packet_EPMD_DUMP_REQ(self, payload: bytes) -> None:
         """Handle the DUMP_REQ packet."""
         logger.debug("Incoming DUMP_REQ")
         response = EpmdDumpRespPacket(
@@ -187,7 +193,7 @@ class EpmdProtocol(asyncio.Protocol):
         # When all NodeInfo has been written the connection is closed by the EPMD.
         self.transport.close()
 
-    def _on_packet_EPMD_STOP_REQ(self, payload: bytes):
+    def _on_packet_EPMD_STOP_REQ(self, payload: bytes) -> None:
         """Handle the STOP_REQ packet."""
         logger.debug("Incoming STOP_REQ")
         node_name = payload[1:]
