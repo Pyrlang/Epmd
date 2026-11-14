@@ -11,11 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import sys
-import time
 import asyncio
 import logging
-
+import sys
+import time
 from typing import TYPE_CHECKING
 
 from epmd.epmd_node import EpmdNode
@@ -29,9 +28,9 @@ from epmd.epmd_proto_packets import (
     EpmdAliveReqPacket,
     EpmdAliveRespPacket,
     EpmdDumpRespPacket,
+    EpmdNamesRespPacket,
     EpmdPortPleaseErrorPacket,
     EpmdPortPleaseRespPacket,
-    EpmdNamesRespPacket,
 )
 
 logger = logging.getLogger("epmd.server")

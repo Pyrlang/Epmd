@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import logging
+from struct import pack, unpack
+
 from epmd.epmd_node import EpmdNode
 from epmd.errors import EpmdError
-from struct import unpack, pack
 
 logger = logging.getLogger("epmd.server")
 logger.setLevel(logging.DEBUG)
