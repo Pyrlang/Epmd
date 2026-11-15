@@ -28,6 +28,14 @@
   `old/unused name`); nodes with HighestVersion below 6 get 1..3. It was
   `int(time.time())`, equal for two registrations within a second and 0 in
   the 16-bit reply now and then. See `KNOWN-DIFFERENCES.md`.
+- Local-only rules as OTP's epmd: ALIVE2, DUMP, KILL and STOP are served
+  only to peers on loopback (127.0.0.0/8, `::1`, IPv4-mapped) or on the
+  address they connected to; the old check compared strings and raised
+  `TypeError` for other peers. KILL_REQ no longer calls `sys.exit()`: it
+  answers `OK` and stops the server (`start_server()` returns), but answers
+  `NO` while nodes are registered. STOP_REQ is ignored unless the new
+  `Epmd(relaxed_command_check=True)`; then it also closes the node's
+  connection, and an unknown name gets `NOEXISTSTOPPED`, as from OTP.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).

@@ -55,14 +55,22 @@ class Epmd:
         port: int = EPMD_DEFAULT_PORT,
         *,
         packet_timeout: float = DEFAULT_PACKET_TIMEOUT,
+        relaxed_command_check: bool = False,
     ) -> None:
         """:param port: port to listen on; 0 picks a free one (see ``start``).
         :param packet_timeout: seconds after which a connection that has not
             sent a complete request is closed (registered nodes are exempt).
+        :param relaxed_command_check: as OTP's ``epmd
+            -relaxed_command_check``: KILL_REQ stops the server even while
+            nodes are registered, and STOP_REQ may unregister any name.
+            Without it KILL_REQ is refused (``NO``) while nodes are
+            registered and STOP_REQ is ignored. Both are always refused to
+            peers on other hosts.
         """
         self.port = port
         self.host = host
         self.packet_timeout = packet_timeout
+        self.relaxed_command_check = relaxed_command_check
         self.nodes: dict[bytes, EpmdNode] = {}
         # Unused; kept for compatibility. The reply to ALIVE2_REQ follows the
         # node's HighestVersion, as in OTP.
@@ -75,6 +83,10 @@ class Epmd:
         # Unregistered nodes, oldest first, so that a name registered again
         # gets the next creation (OTP's "unreg" list).
         self._unregistered: OrderedDict[bytes, EpmdNode] = OrderedDict()
+        # Set by stop(); start_server() waits for it.
+        self._stopped: Optional[asyncio.Event] = None
+        # The stop() started by a KILL_REQ, referenced until it is done.
+        self._kill_task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
         """Start listening and return once the socket listens.
@@ -93,6 +105,8 @@ class Epmd:
             protocol_factory=lambda: EpmdProtocol(parent=self),
         )
         self.port = self._server.sockets[0].getsockname()[1]
+        self._stopped = asyncio.Event()
+        self._kill_task = None
         logger.info("Listening at %s:%d", self.host, self.port)
 
     async def stop(self) -> None:
@@ -106,19 +120,39 @@ class Epmd:
         for conn in list(self._connections):
             conn.transport.close()
         await server.wait_closed()
+        if self._stopped is not None:
+            self._stopped.set()
         logger.info("Stopped listening at %s:%d", self.host, self.port)
 
     async def start_server(self) -> None:
-        """Start listening and serve until cancelled; then stop.
+        """Start listening and serve until cancelled or stopped (``stop()``
+        or a KILL_REQ); then stop.
 
         :raises OSError: the port is in use, typically by another EPMD.
         """
         await self.start()
-        assert self._server is not None
+        assert self._stopped is not None
         try:
-            await self._server.serve_forever()
+            await self._stopped.wait()
         finally:
             await self.stop()
+
+    def _kill(self) -> None:
+        """Stop the server after a KILL_REQ (from a protocol callback)."""
+        if self._kill_task is None:
+            self._kill_task = asyncio.get_running_loop().create_task(self.stop())
+
+    def _stop_node(self, node_name: bytes) -> bool:
+        """STOP_REQ: unregister ``node_name`` and close the connection that
+        registered it. False if it is not registered."""
+        node = self.nodes.get(node_name)
+        if node is None or not self.unregister(node_name):
+            return False
+        for conn in list(self._connections):
+            if conn.node_ is node:
+                conn.node_ = None
+                conn.transport.close()
+        return True
 
     def _connected(self, conn: "EpmdProtocol") -> None:
         self._connections.add(conn)

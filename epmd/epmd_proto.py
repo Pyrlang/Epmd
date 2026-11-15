@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import ipaddress
 import logging
-import sys
 from struct import unpack_from
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -63,6 +63,9 @@ class EpmdProtocol(asyncio.Protocol):
         self.done_: bool = False
         # Closes a connection that sends no complete request in time.
         self.timer_: Optional[asyncio.TimerHandle] = None
+        # The peer is on this host; only then are ALIVE2, DUMP, KILL and
+        # STOP served.
+        self.local_peer: bool = False
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         logger.debug("Disconnected %s", self.addr)
@@ -77,7 +80,10 @@ class EpmdProtocol(asyncio.Protocol):
         """Connection has been accepted and established (callback)."""
         self.transport = transport
         self.addr = transport.get_extra_info("peername")
-        logger.debug("Incoming from %s", self.addr)
+        self.local_peer = _is_local_peer(
+            self.addr, transport.get_extra_info("sockname")
+        )
+        logger.debug("Incoming from %s (local: %s)", self.addr, self.local_peer)
         self.parent._connected(self)
         self.timer_ = asyncio.get_running_loop().call_later(
             self.parent.packet_timeout, self._timed_out
@@ -150,8 +156,7 @@ class EpmdProtocol(asyncio.Protocol):
 
     def _on_packet_EPMD_ALIVE2_REQ(self, payload: bytes) -> None:
         """Handle the ALIVE2_REQ packet."""
-        if self.addr[0] not in ("127.0.0.1", "localhost"):
-            raise EpmdRequestError("ALIVE2_REQ from a non-local address")
+        self._require_local_peer("ALIVE2_REQ")
         req = pk.decode_alive2_req(payload)
         node = self.parent._register_request(req, self.transport)
         if node is not None:
@@ -186,25 +191,61 @@ class EpmdProtocol(asyncio.Protocol):
         nodes = [(n.node_name, n.port) for n in self.parent._newest_first()]
         self.transport.write(pk.encode_names_resp(self.parent.port, nodes))
 
+    def _require_local_peer(self, request: str) -> None:
+        if not self.local_peer:
+            raise EpmdRequestError("%s from non-local %s" % (request, self.addr))
+
     def _on_packet_EPMD_KILL_REQ(self, payload: bytes) -> None:
-        """Handle the KILL_REQ packet."""
+        """Handle the KILL_REQ packet: stop the server, unless nodes are
+        registered and the server does not run with relaxed_command_check."""
+        self._require_local_peer("KILL_REQ")
+        if self.parent.nodes and not self.parent.relaxed_command_check:
+            logger.info("KILL_REQ refused: nodes are registered")
+            self.transport.write(b"NO")
+            return
+        logger.info("KILL_REQ: stopping")
         self.transport.write(b"OK")
         self.transport.close()
-        sys.exit(0)
+        self.parent._kill()
 
     def _on_packet_EPMD_DUMP_REQ(self, payload: bytes) -> None:
         """Handle the DUMP_REQ packet."""
+        self._require_local_peer("DUMP_REQ")
         active = [(n.node_name, n.port, n.fd) for n in self.parent._newest_first()]
         old = [(n.node_name, n.port, n.fd) for n in self.parent._old_nodes()]
         self.transport.write(pk.encode_dump_resp(self.parent.port, active, old))
 
     def _on_packet_EPMD_STOP_REQ(self, payload: bytes) -> None:
-        """Handle the STOP_REQ packet."""
-        node_name = payload[1:]
-        if self.parent.unregister(node_name):
-            self.transport.write(b"STOPPED")
-        else:
+        """Handle the STOP_REQ packet: unregister a name and close its
+        node's connection. Only with relaxed_command_check."""
+        self._require_local_peer("STOP_REQ")
+        if not self.parent.relaxed_command_check:
+            raise EpmdRequestError("STOP_REQ without relaxed_command_check")
+        if len(payload) <= 1:
+            raise EpmdRequestError("STOP_REQ without a node name")
+        # OTP reads the name as a C string.
+        name = payload[1:].split(b"\0", 1)[0]
+        if not self.parent._stop_node(name):
+            # OTP's epmd_srv.c falls through after NOEXIST and also sends
+            # STOPPED; kept byte for byte.
             self.transport.write(b"NOEXIST")
+        self.transport.write(b"STOPPED")
+
+
+def _is_local_peer(peer: Any, local: Any) -> bool:
+    """The peer is on this host: a loopback address (127.0.0.0/8, ::1, also
+    IPv4-mapped) or the address it connected to (conn_local_peer_check in
+    epmd_srv.c). ``peer`` and ``local`` are socket addresses, or None."""
+    try:
+        addr = ipaddress.ip_address(peer[0].split("%", 1)[0])
+        own = ipaddress.ip_address(local[0].split("%", 1)[0])
+    except (TypeError, IndexError, ValueError, AttributeError):
+        return False  # OTP: no peer name means not local
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    if isinstance(own, ipaddress.IPv6Address) and own.ipv4_mapped is not None:
+        own = own.ipv4_mapped
+    return addr.is_loopback or addr == own
 
 
 __all__ = ["EpmdProtocol"]
