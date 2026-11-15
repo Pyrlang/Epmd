@@ -48,6 +48,9 @@ class Epmd:
     # Seconds a connection may take to send its request (OTP's default
     # -packet_timeout, CLOSE_TIMEOUT in epmd_int.h).
     DEFAULT_PACKET_TIMEOUT = 60.0
+    # Open client connections at most; OTP's epmd is bound by FD_SETSIZE,
+    # 1024 on Linux and, since ERTS 16.0.2, on Windows.
+    DEFAULT_MAX_CONNECTIONS = 1024
 
     def __init__(
         self,
@@ -56,10 +59,13 @@ class Epmd:
         *,
         packet_timeout: float = DEFAULT_PACKET_TIMEOUT,
         relaxed_command_check: bool = False,
+        max_connections: int = DEFAULT_MAX_CONNECTIONS,
     ) -> None:
         """:param port: port to listen on; 0 picks a free one (see ``start``).
         :param packet_timeout: seconds after which a connection that has not
             sent a complete request is closed (registered nodes are exempt).
+        :param max_connections: open client connections, registered nodes
+            included; one more is accepted and closed at once.
         :param relaxed_command_check: as OTP's ``epmd
             -relaxed_command_check``: KILL_REQ stops the server even while
             nodes are registered, and STOP_REQ may unregister any name.
@@ -71,6 +77,7 @@ class Epmd:
         self.host = host
         self.packet_timeout = packet_timeout
         self.relaxed_command_check = relaxed_command_check
+        self.max_connections = max_connections
         self.nodes: dict[bytes, EpmdNode] = {}
         # Unused; kept for compatibility. The reply to ALIVE2_REQ follows the
         # node's HighestVersion, as in OTP.
@@ -154,8 +161,12 @@ class Epmd:
                 conn.transport.close()
         return True
 
-    def _connected(self, conn: "EpmdProtocol") -> None:
+    def _connected(self, conn: "EpmdProtocol") -> bool:
+        """Track a new connection; False if it is over ``max_connections``."""
+        if len(self._connections) >= self.max_connections:
+            return False
         self._connections.add(conn)
+        return True
 
     def _disconnected(self, conn: "EpmdProtocol") -> None:
         self._connections.discard(conn)

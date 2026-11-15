@@ -84,7 +84,12 @@ class EpmdProtocol(asyncio.Protocol):
             self.addr, transport.get_extra_info("sockname")
         )
         logger.debug("Incoming from %s (local: %s)", self.addr, self.local_peer)
-        self.parent._connected(self)
+        if not self.parent._connected(self):
+            # Over the limit: OTP's epmd accepts and closes at once.
+            logger.warning("Too many connections, closing %s", self.addr)
+            self.done_ = True
+            transport.close()
+            return
         self.timer_ = asyncio.get_running_loop().call_later(
             self.parent.packet_timeout, self._timed_out
         )

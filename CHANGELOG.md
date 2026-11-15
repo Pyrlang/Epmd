@@ -36,6 +36,9 @@
   `NO` while nodes are registered. STOP_REQ is ignored unless the new
   `Epmd(relaxed_command_check=True)`; then it also closes the node's
   connection, and an unknown name gets `NOEXISTSTOPPED`, as from OTP.
+- `Epmd(max_connections=1024)`: a client connection over the limit is
+  accepted and closed at once (OTP's epmd does the same); with the packet
+  timeout this bounds what silent clients can hold.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).
