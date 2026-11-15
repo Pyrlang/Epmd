@@ -13,6 +13,8 @@
 # limitations under the License.
 import asyncio
 import logging
+import secrets
+from collections import OrderedDict
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Optional
 
@@ -23,6 +25,17 @@ if TYPE_CHECKING:
     from epmd.epmd_proto import EpmdProtocol
 
 logger = logging.getLogger(__name__)
+
+# Unregistered names remembered for their creation; above this a new name
+# drops the oldest (MAX_UNREG_COUNT in epmd_int.h).
+MAX_UNREG_COUNT = 1000
+
+
+def _bump_creation(counter: int) -> int:
+    """The next creation counter, 4..2^32-1 (epmd_srv.c bump_creation); 0..3
+    are skipped because OTP gives them special meaning."""
+    counter = (counter + 1) & 0xFFFFFFFF
+    return counter if counter >= 4 else 4
 
 
 class Epmd:
@@ -59,6 +72,9 @@ class Epmd:
         # Open client connections, closed by stop(): Server.close() leaves
         # them open before Python 3.13.
         self._connections: set["EpmdProtocol"] = set()
+        # Unregistered nodes, oldest first, so that a name registered again
+        # gets the next creation (OTP's "unreg" list).
+        self._unregistered: OrderedDict[bytes, EpmdNode] = OrderedDict()
 
     async def start(self) -> None:
         """Start listening and return once the socket listens.
@@ -111,10 +127,22 @@ class Epmd:
         self._connections.discard(conn)
 
     def register(self, node_name: bytes, data: EpmdNode) -> bool:
-        """Attempts to register a node. Returns True if successful, False if the node is already registered."""
+        """Attempts to register a node. Returns True if successful, False if the node is already registered.
+
+        Sets ``data.cr_counter``: one more than at the name's previous
+        registration if it is remembered, else a random start.
+        """
         if node_name in self.nodes:
             logger.info("Node %r already registered", node_name)
             return False
+        old = self._unregistered.pop(node_name, None)
+        if old is not None:
+            counter = old.cr_counter
+        else:
+            if len(self._unregistered) > MAX_UNREG_COUNT:
+                self._unregistered.popitem(last=False)
+            counter = secrets.randbits(32)
+        data.cr_counter = _bump_creation(counter)
         logger.info("Registering node_name=%r", node_name)
         self.nodes[node_name] = data
         return True
@@ -125,11 +153,13 @@ class Epmd:
         (documentation claims this is not used but still implemented).
         Removes the node from the list of nodes.
         """
-        if node_name in self.nodes:
-            logger.info("Unregistering node_name=%r", node_name)
-            del self.nodes[node_name]
-            return True
-        return False
+        node = self.nodes.pop(node_name, None)
+        if node is None:
+            return False
+        logger.info("Unregistering node_name=%r", node_name)
+        # Remembered for its next creation and listed by DUMP_REQ.
+        self._unregistered[node_name] = node
+        return True
 
     def _register_request(
         self, req: pk.Alive2Req, transport: asyncio.BaseTransport
@@ -167,3 +197,7 @@ class Epmd:
     def _newest_first(self) -> Iterator[EpmdNode]:
         """Registered nodes, the latest registration first (OTP's order)."""
         return reversed(list(self.nodes.values()))
+
+    def _old_nodes(self) -> Iterator[EpmdNode]:
+        """Unregistered nodes still remembered, the oldest first."""
+        return iter(list(self._unregistered.values()))

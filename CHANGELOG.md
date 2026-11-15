@@ -22,6 +22,12 @@
   name). `PORT2_REQ` drops one trailing NUL and is closed without a reply
   for an empty name, a NUL inside it, invalid UTF-8 or more than 255
   characters. `EpmdNode` has `extra` and `fd`.
+- Creation as in OTP's epmd: a 32-bit counter per name (4..2^32-1, random
+  start) that grows by one each time the name registers again (up to 1000
+  unregistered names are remembered, and `DUMP_RESP` lists them as
+  `old/unused name`); nodes with HighestVersion below 6 get 1..3. It was
+  `int(time.time())`, equal for two registrations within a second and 0 in
+  the 16-bit reply now and then. See `KNOWN-DIFFERENCES.md`.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).

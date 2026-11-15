@@ -14,7 +14,6 @@
 import asyncio
 import logging
 import sys
-import time
 from struct import unpack_from
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -156,7 +155,7 @@ class EpmdProtocol(asyncio.Protocol):
         req = pk.decode_alive2_req(payload)
         node = self.parent._register_request(req, self.transport)
         if node is not None:
-            creation = int(time.time())
+            creation = node.creation
             self.node_ = node
             self.node_name = req.name
         else:
@@ -196,7 +195,8 @@ class EpmdProtocol(asyncio.Protocol):
     def _on_packet_EPMD_DUMP_REQ(self, payload: bytes) -> None:
         """Handle the DUMP_REQ packet."""
         active = [(n.node_name, n.port, n.fd) for n in self.parent._newest_first()]
-        self.transport.write(pk.encode_dump_resp(self.parent.port, active, []))
+        old = [(n.node_name, n.port, n.fd) for n in self.parent._old_nodes()]
+        self.transport.write(pk.encode_dump_resp(self.parent.port, active, old))
 
     def _on_packet_EPMD_STOP_REQ(self, payload: bytes) -> None:
         """Handle the STOP_REQ packet."""

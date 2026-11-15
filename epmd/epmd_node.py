@@ -35,3 +35,14 @@ class EpmdNode:
         self.fd = fd
         # The Extra field of ALIVE2_REQ, returned unchanged in PORT2_RESP.
         self.extra = extra
+        # OTP's cr_counter: 4..2^32-1, set by Epmd.register, advanced by one
+        # each time the name is registered again.
+        self.cr_counter = 0
+
+    @property
+    def creation(self) -> int:
+        """Creation sent to the node: the 32-bit counter to a node with
+        HighestVersion >= 6, else 1..3 (epmd_srv.c get_creation)."""
+        if self.hi_ver >= 6:
+            return self.cr_counter
+        return self.cr_counter % 3 + 1
