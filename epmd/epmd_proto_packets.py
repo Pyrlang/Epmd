@@ -142,10 +142,12 @@ class Port2Info:
     hi_ver: int
     lo_ver: int
     name: bytes
+    extra: bytes
 
 
 def encode_port2_resp(node: Port2Info | None) -> bytes:
-    """PORT2_RESP: the node's entry, or result 1 if it is not registered."""
+    """PORT2_RESP: the node's entry ending in ``Elen:16, Extra``, or result
+    1 if it is not registered."""
     if node is None:
         return pack(">BB", EPMD_PORT2_RESP, 1)
     return (
@@ -161,6 +163,8 @@ def encode_port2_resp(node: Port2Info | None) -> bytes:
             len(node.name),
         )
         + node.name
+        + pack(">H", len(node.extra))
+        + node.extra
     )
 
 

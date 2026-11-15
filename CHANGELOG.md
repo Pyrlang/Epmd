@@ -18,6 +18,10 @@
   creation 99; the reply is `ALIVE2_X_RESP` only to nodes with
   HighestVersion 6 or more. Closing a refused registration no longer
   unregisters the node that holds the name.
+- `PORT2_RESP` ends with `Elen`/`Extra` as registered (it stopped after the
+  name). `PORT2_REQ` drops one trailing NUL and is closed without a reply
+  for an empty name, a NUL inside it, invalid UTF-8 or more than 255
+  characters. `EpmdNode` has `extra` and `fd`.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).

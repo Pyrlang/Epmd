@@ -178,6 +178,7 @@ class EpmdProtocol(asyncio.Protocol):
                 hi_ver=node.hi_ver,
                 lo_ver=node.lo_ver,
                 name=node.node_name,
+                extra=node.extra,
             )
         self.transport.write(pk.encode_port2_resp(info))
 

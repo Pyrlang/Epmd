@@ -155,6 +155,7 @@ class Epmd:
             hi_ver=req.hi_ver,
             lo_ver=req.lo_ver,
             fd=sock.fileno() if sock is not None else -1,
+            extra=req.extra,
         )
         return node if self.register(req.name, node) else None
 

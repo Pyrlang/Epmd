@@ -23,6 +23,7 @@ class EpmdNode:
         hi_ver: int,
         lo_ver: int,
         fd: int = -1,
+        extra: bytes = b"",
     ) -> None:
         self.node_name = node_name
         self.port = port
@@ -32,3 +33,5 @@ class EpmdNode:
         self.lo_ver = lo_ver
         # Socket descriptor of the registering connection, shown by DUMP_REQ.
         self.fd = fd
+        # The Extra field of ALIVE2_REQ, returned unchanged in PORT2_RESP.
+        self.extra = extra

@@ -21,8 +21,35 @@ from epmd import Epmd
 # The OTP suite runs epmd with -packet_timeout 1.
 PACKET_TIMEOUT = 1.0
 
-# Registered by the fixture for the whole test.
+# Registered by the fixture for the whole test: name -> ALIVE2_REQ fields.
 FOO_PORT = 1042
+# From epmd_SUITE:unicode_name and long_unicode_name (800+ bytes).
+DEVIL = "\U0001f608".encode()
+LONG = "".join(map(chr, range(0x1F600, 0x1F600 + 201))).encode()
+NODES: dict[bytes, dict[str, Any]] = {
+    b"foo": dict(port=FOO_PORT),
+    # From epmd_SUITE:returns_valid_populated_extra_with_nulls.
+    b"bar": dict(port=4711, node_type=72, extra=b"ABC\0\0"),
+    DEVIL: dict(port=4711, node_type=72),
+    LONG: dict(port=4711, node_type=72),
+}
+
+
+def port2_resp(name: bytes) -> bytes:
+    """The PORT2_RESP for a node in NODES (erl_dist_protocol layout)."""
+    f = dict(port=1000, node_type=77, proto=0, hi_ver=5, lo_ver=5, extra=b"")
+    f.update(NODES[name])
+    return (
+        b"w\x00"
+        + u16(f["port"])
+        + bytes([f["node_type"], f["proto"]])
+        + u16(f["hi_ver"])
+        + u16(f["lo_ver"])
+        + u16(len(name))
+        + name
+        + u16(len(f["extra"]))
+        + f["extra"]
+    )
 
 
 def hostile(n: int) -> bytes:
@@ -72,23 +99,50 @@ ROWS: dict[str, tuple[Sequence[bytes | float], Reply]] = {
     "name_with_null_inside": ([framed(alive2_req(b"foo\0bar"))], b""),
     "name_null_terminated": ([framed(alive2_req(b"foobar\0"))], b""),
     "invalid_utf8_name": ([framed(alive2_req(b"\xc0\x80"))], REFUSED_5),
+    # From epmd_SUITE:register_duplicate_name.
+    "register_duplicate_name": ([framed(alive2_req(b"foo"))], REFUSED_5),
+    "register_duplicate_name-v6": (
+        [framed(alive2_req(b"foo", hi_ver=6, lo_ver=6))],
+        b"v\x01\x00\x00" + u16(99),
+    ),
+    # From epmd_SUITE: PORT2_REQ, Extra and names.
+    "get_port_nr": ([framed(b"zfoo")], port2_resp(b"foo")),
+    "slow_get_port_nr": (
+        [u16(4) + b"z", 0.2, b"f", 0.2, b"o", 0.2, b"o"],
+        port2_resp(b"foo"),
+    ),
+    "returns_valid_empty_extra": ([framed(b"zfoo")], port2_resp(b"foo")),
+    "returns_valid_populated_extra_with_nulls": (
+        [framed(b"zbar")],
+        port2_resp(b"bar"),
+    ),
+    "unicode_name": ([framed(b"z" + DEVIL)], port2_resp(DEVIL)),
+    "long_unicode_name": ([framed(b"z" + LONG)], port2_resp(LONG)),
+    # Not in the suite; rules from epmd_srv.c (EPMD_PORT2_REQ).
+    "port2_unknown_name": ([framed(b"zxxx42")], b"w\x01"),
+    "port2_trailing_nul": ([framed(b"zfoo\0")], port2_resp(b"foo")),
+    "port2_empty_name": ([framed(b"z")], b""),
+    "port2_only_nul": ([framed(b"z\0")], b""),
+    "port2_nul_inside": ([framed(b"zfo\0o")], b""),
+    "port2_invalid_utf8": ([framed(b"z\xed\xa0\x80")], b""),
+    "port2_256_chars": ([framed(b"z" + b"a" * 256)], b""),
 }
 
 
 @pytest_asyncio.fixture
 async def served() -> AsyncIterator[Epmd]:
-    """A server with the suite's packet timeout and node ``foo`` registered;
-    records calls of the loop's exception handler."""
+    """A server with the suite's packet timeout and the NODES registered."""
     server = Epmd(host="127.0.0.1", port=0, packet_timeout=PACKET_TIMEOUT)
     await server.start()
-    foo: Registered | None = None
+    held: list[Registered] = []
     try:
-        foo = await register(server.port, alive2_req(b"foo", port=FOO_PORT))
-        assert foo.reply[:2] == b"y\x00", foo.reply
+        for name, fields in NODES.items():
+            held.append(await register(server.port, alive2_req(name, **fields)))
+            assert held[-1].reply[:2] == b"y\x00", (name, held[-1].reply)
         yield server
     finally:
-        if foo is not None:
-            await foo.close()
+        for reg in held:
+            await reg.close()
         await server.stop()
 
 
@@ -106,6 +160,5 @@ async def test_request(
     else:
         got = await exchange(served.port, send, want=reply[0])
         assert reply[1].fullmatch(got), got
-    port_req = await exchange(served.port, [framed(b"zfoo")])
-    assert port_req[:4] == b"w\x00" + u16(FOO_PORT), port_req
+    assert await exchange(served.port, [framed(b"zfoo")]) == port2_resp(b"foo")
     assert errors == []
