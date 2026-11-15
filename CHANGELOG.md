@@ -39,6 +39,15 @@
 - `Epmd(max_connections=1024)`: a client connection over the limit is
   accepted and closed at once (OTP's epmd does the same); with the packet
   timeout this bounds what silent clients can hold.
+- `Epmd()` listens on IPv4 and IPv6 (was `0.0.0.0` only); the default of
+  `host` is now `None`. New `addresses=[...]`: those addresses plus the
+  loopback addresses, skipped if a family is missing (OTP's
+  `ERL_EPMD_ADDRESS` rules). New `python -m epmd [--port N] [--address A]
+  [--relaxed-command-check] [--packet-timeout S] [--max-connections N]`,
+  defaulting from `ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS`,
+  `ERL_EPMD_RELAXED_COMMAND_CHECK`.
+- OTP 29 message names: `EpmdProtocol.EPMD_PORT2_REQ`;
+  `EPMD_PORT_PLEASE2_REQ` stays as an alias.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).

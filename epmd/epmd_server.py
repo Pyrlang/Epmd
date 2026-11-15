@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import errno
+import ipaddress
 import logging
 import secrets
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Optional
 
 from epmd import epmd_proto_packets as pk
 from epmd.epmd_node import EpmdNode
+from epmd.errors import EpmdError
 
 if TYPE_CHECKING:
     from epmd.epmd_proto import EpmdProtocol
@@ -29,6 +32,8 @@ logger = logging.getLogger(__name__)
 # Unregistered names remembered for their creation; above this a new name
 # drops the oldest (MAX_UNREG_COUNT in epmd_int.h).
 MAX_UNREG_COUNT = 1000
+# OTP's limit on listening sockets; two are kept for the loopback addresses.
+MAX_LISTEN_SOCKETS = 16
 
 
 def _bump_creation(counter: int) -> int:
@@ -54,14 +59,21 @@ class Epmd:
 
     def __init__(
         self,
-        host: str = "0.0.0.0",
+        host: Optional[str] = None,
         port: int = EPMD_DEFAULT_PORT,
         *,
+        addresses: Optional[Sequence[str]] = None,
         packet_timeout: float = DEFAULT_PACKET_TIMEOUT,
         relaxed_command_check: bool = False,
         max_connections: int = DEFAULT_MAX_CONNECTIONS,
     ) -> None:
-        """:param port: port to listen on; 0 picks a free one (see ``start``).
+        """Where it listens: on ``host`` only, if given; else on
+        ``addresses`` (IP literals, as OTP's ``ERL_EPMD_ADDRESS``) plus the
+        IPv4 and IPv6 loopback addresses, which are skipped if they cannot be
+        bound; else on every IPv4 and IPv6 address (IPv6 skipped if the host
+        has none).
+
+        :param port: port to listen on; 0 picks a free one (see ``start``).
         :param packet_timeout: seconds after which a connection that has not
             sent a complete request is closed (registered nodes are exempt).
         :param max_connections: open client connections, registered nodes
@@ -75,6 +87,7 @@ class Epmd:
         """
         self.port = port
         self.host = host
+        self.addresses: list[str] = list(addresses or [])
         self.packet_timeout = packet_timeout
         self.relaxed_command_check = relaxed_command_check
         self.max_connections = max_connections
@@ -82,8 +95,8 @@ class Epmd:
         # Unused; kept for compatibility. The reply to ALIVE2_REQ follows the
         # node's HighestVersion, as in OTP.
         self.supports_protocol_6 = True
-        # The listening server between start() and stop().
-        self._server: Optional[asyncio.Server] = None
+        # One listening server per bound address, between start() and stop().
+        self._servers: list[asyncio.Server] = []
         # Open client connections, closed by stop(): Server.close() leaves
         # them open before Python 3.13.
         self._connections: set["EpmdProtocol"] = set()
@@ -98,38 +111,91 @@ class Epmd:
     async def start(self) -> None:
         """Start listening and return once the socket listens.
 
-        Afterwards ``self.port`` is the bound port (useful with ``port=0``).
+        Afterwards ``self.port`` is the bound port (useful with ``port=0``;
+        every address then gets the port the first one got).
 
-        :raises OSError: the port is in use, typically by another EPMD.
+        :raises OSError: the port is in use, typically by another EPMD, or a
+            required address cannot be bound.
+        :raises EpmdError: an entry of ``addresses`` is not an IP address,
+            or there are more than 13.
         """
-        if self._server is not None:
+        if self._servers:
             return
         from epmd.epmd_proto import EpmdProtocol
 
-        self._server = await asyncio.get_running_loop().create_server(
-            host=self.host,
-            port=self.port,
-            protocol_factory=lambda: EpmdProtocol(parent=self),
-        )
-        self.port = self._server.sockets[0].getsockname()[1]
+        loop = asyncio.get_running_loop()
+        servers: list[asyncio.Server] = []
+        try:
+            for host, required in self._listen_addresses():
+                try:
+                    server = await loop.create_server(
+                        lambda: EpmdProtocol(parent=self), host=host, port=self.port
+                    )
+                except OSError as e:
+                    # OTP exits on EADDRINUSE for any address.
+                    if required or e.errno == errno.EADDRINUSE:
+                        raise
+                    logger.info("Not listening on %s: %s", host, e)
+                    continue
+                servers.append(server)
+                self.port = server.sockets[0].getsockname()[1]
+                logger.info("Listening at %s port %d", host, self.port)
+        except BaseException:
+            for server in servers:
+                server.close()
+            raise
+        if not servers:
+            raise EpmdError("unable to bind any address")
+        self._servers = servers
         self._stopped = asyncio.Event()
         self._kill_task = None
-        logger.info("Listening at %s:%d", self.host, self.port)
+
+    def _listen_addresses(self) -> list[tuple[str, bool]]:
+        """``(address, required)`` pairs to bind (run() in epmd_srv.c)."""
+        if self.host is not None:
+            return [(self.host, True)]
+        if not self.addresses:
+            return [("0.0.0.0", True), ("::", False)]
+        result = []
+        v4_covered = v6_covered = False
+        for text in self.addresses:
+            try:
+                addr = ipaddress.ip_address(text)
+            except ValueError:
+                raise EpmdError("cannot parse IP address %r" % text) from None
+            covered = addr.is_loopback or addr.is_unspecified
+            if addr.version == 4:
+                v4_covered |= covered
+            else:
+                v6_covered |= covered
+            result.append((str(addr), True))
+        if len(result) >= MAX_LISTEN_SOCKETS - 2:
+            raise EpmdError(
+                "cannot listen on more than %d IP addresses" % (MAX_LISTEN_SOCKETS - 2)
+            )
+        # Loopback is always served; the stack may lack one family.
+        if not v4_covered:
+            result.append(("127.0.0.1", False))
+        if not v6_covered:
+            result.append(("::1", False))
+        return result
 
     async def stop(self) -> None:
         """Stop listening and close every client connection. Registered
         nodes are forgotten. Calling it again, or before ``start``, is safe.
         """
-        server, self._server = self._server, None
-        if server is None:
+        servers, self._servers = self._servers, []
+        if not servers:
             return
-        server.close()
+        for server in servers:
+            server.close()
         for conn in list(self._connections):
             conn.transport.close()
-        await server.wait_closed()
+        for server in servers:
+            await server.wait_closed()
         if self._stopped is not None:
             self._stopped.set()
-        logger.info("Stopped listening at %s:%d", self.host, self.port)
+        logger.info("Stopped listening on port %d", self.port)
 
     async def start_server(self) -> None:
         """Start listening and serve until cancelled or stopped (``stop()``

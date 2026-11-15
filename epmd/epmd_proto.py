@@ -37,7 +37,9 @@ class EpmdProtocol(asyncio.Protocol):
     """
 
     EPMD_ALIVE2_REQ = pk.EPMD_ALIVE2_REQ
-    EPMD_PORT_PLEASE2_REQ = pk.EPMD_PORT2_REQ
+    EPMD_PORT2_REQ = pk.EPMD_PORT2_REQ
+    # The name before OTP 29; kept for compatibility.
+    EPMD_PORT_PLEASE2_REQ = EPMD_PORT2_REQ
     EPMD_NAMES_REQ = pk.EPMD_NAMES_REQ
     EPMD_KILL_REQ = pk.EPMD_KILL_REQ
     EPMD_DUMP_REQ = pk.EPMD_DUMP_REQ
@@ -148,7 +150,7 @@ class EpmdProtocol(asyncio.Protocol):
         if code == pk.EPMD_ALIVE2_REQ:
             return self._on_packet_EPMD_ALIVE2_REQ(packet)
         elif code == pk.EPMD_PORT2_REQ:
-            return self._on_packet_EPMD_PORT_PLEASE2_REQ(packet)
+            return self._on_packet_EPMD_PORT2_REQ(packet)
         elif code == pk.EPMD_NAMES_REQ:
             return self._on_packet_EPMD_NAMES_REQ(packet)
         elif code == pk.EPMD_KILL_REQ:
@@ -174,7 +176,7 @@ class EpmdProtocol(asyncio.Protocol):
             pk.encode_alive2_resp(node is not None, creation, req.hi_ver)
         )
 
-    def _on_packet_EPMD_PORT_PLEASE2_REQ(self, payload: bytes) -> None:
+    def _on_packet_EPMD_PORT2_REQ(self, payload: bytes) -> None:
         """Handle the PORT2_REQ packet."""
         name = pk.decode_port2_req(payload)
         node = self.parent.nodes.get(name)

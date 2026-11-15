@@ -20,6 +20,21 @@ To run it next to other asyncio code, `await server.start()` returns once the
 server listens (`Epmd(port=0)` picks a free port, then `server.port` has it)
 and `await server.stop()` shuts it down.
 
+`Epmd()` listens on every IPv4 and IPv6 address. `Epmd(host="127.0.0.1")`
+listens on that address only; `Epmd(addresses=["10.0.0.5"])` listens there
+and on the loopback addresses, as OTP's epmd does with `ERL_EPMD_ADDRESS`.
+Other options: `packet_timeout`, `max_connections`, `relaxed_command_check`
+(see the `Epmd` docstring). Behaviour that differs from OTP's epmd is listed
+in [KNOWN-DIFFERENCES.md](KNOWN-DIFFERENCES.md).
+
+From the command line, configured like OTP's `epmd` through
+`ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS` and `ERL_EPMD_RELAXED_COMMAND_CHECK`,
+or options (`python -m epmd --help`):
+
+```sh
+python -m epmd --port 4370 --address 127.0.0.1
+```
+
 Now, use your erlang module with the custom epmd started (running at port 4370) above by:
 ```sh
 ERL_EPMD_PORT=<custom_epmd_port> erl -name <node_name>
