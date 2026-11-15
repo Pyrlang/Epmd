@@ -11,8 +11,9 @@
   root, and a missing release fails the tests that need it.
   ``PYRLANG_OTP_BINS="25=/path/bin 26=/path/bin"`` overrides the matrix.
   Elsewhere the ``erl`` on ``PATH`` is used, or the tests skip.
-- ``erl_nodes``: starts ``erl -name`` nodes of that release that register
-  in ``epmd_server`` and evaluate expressions sent by the test.
+- ``otp_oldest_newest``: the oldest and newest release, for mixed setups.
+- ``erl_nodes``: starts ``erl -name`` nodes of a given release that
+  register in ``epmd_server`` and evaluate expressions sent by the test.
 
 The Python server runs in the test's loop, so a test talks to an Erlang node
 through ``await node.eval(...)``, which keeps the loop serving EPMD requests.
@@ -225,12 +226,8 @@ class Otp:
         raise FileNotFoundError("%s not in %s" % (name, self.bin_dir))
 
 
-@pytest.fixture(scope="session", params=RELEASES, ids=[r.label for r in RELEASES])
-def otp(
-    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> Otp:
-    """One Erlang/OTP release of the matrix (see the module docstring)."""
-    release: OtpRelease = request.param
+def _prepare(release: OtpRelease, tmp_path_factory: pytest.TempPathFactory) -> Otp:
+    """``release`` with py_eval compiled; fails (in WSL) or skips if unusable."""
     if release.bin_dir is None:
         if IN_WSL or os.environ.get("PYRLANG_OTP_BINS"):
             pytest.fail(
@@ -244,6 +241,26 @@ def otp(
         timeout=TIMEOUT,
     )
     return otp
+
+
+@pytest.fixture(scope="session", params=RELEASES, ids=[r.label for r in RELEASES])
+def otp(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> Otp:
+    """One Erlang/OTP release of the matrix (see the module docstring)."""
+    return _prepare(request.param, tmp_path_factory)
+
+
+@pytest.fixture(scope="session")
+def otp_oldest_newest(tmp_path_factory: pytest.TempPathFactory) -> tuple[Otp, Otp]:
+    """The oldest and the newest release of the matrix, for mixed setups.
+    Skips where the matrix has only one release (outside WSL)."""
+    if len(RELEASES) < 2:
+        pytest.skip("a mixed-release test needs the WSL release matrix")
+    ordered = sorted(RELEASES, key=lambda r: int(r.label) if r.label.isdigit() else 0)
+    return _prepare(ordered[0], tmp_path_factory), _prepare(
+        ordered[-1], tmp_path_factory
+    )
 
 
 # An expression evaluated by ErlNode raised; the text is the {Class, Reason}.
@@ -325,17 +342,17 @@ class ErlNode:
         await asyncio.to_thread(self._stop)
 
 
-# What the erl_nodes fixture gives a test: start one more node.
-StartNode = Callable[[], Awaitable[ErlNode]]
+# What the erl_nodes fixture gives a test: start one more node of a release.
+StartNode = Callable[[Otp], Awaitable[ErlNode]]
 
 
 @pytest_asyncio.fixture
-async def erl_nodes(otp: Otp, epmd_server: Epmd) -> AsyncIterator[StartNode]:
-    """Start ``erl`` nodes registered in ``epmd_server``: ``await start()``.
-    Every node is stopped at the end of the test."""
+async def erl_nodes(epmd_server: Epmd) -> AsyncIterator[StartNode]:
+    """Start ``erl`` nodes registered in ``epmd_server``: ``await
+    start(otp)``. Every node is stopped at the end of the test."""
     started: list[ErlNode] = []
 
-    async def start() -> ErlNode:
+    async def start(otp: Otp) -> ErlNode:
         node = ErlNode(otp, epmd_server.port)
         started.append(node)
         assert await node.eval("node().") == "'%s'" % node.name, node.log()

@@ -37,7 +37,8 @@ NODES: dict[bytes, dict[str, Any]] = {
 
 def port2_resp(name: bytes) -> bytes:
     """The PORT2_RESP for a node in NODES (erl_dist_protocol layout)."""
-    f = dict(port=1000, node_type=77, proto=0, hi_ver=5, lo_ver=5, extra=b"")
+    f: dict[str, Any] = dict(port=1000, node_type=77, proto=0, hi_ver=5, lo_ver=5)
+    f["extra"] = b""
     f.update(NODES[name])
     return (
         b"w\x00"

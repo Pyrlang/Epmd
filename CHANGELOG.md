@@ -48,6 +48,10 @@
   `ERL_EPMD_RELAXED_COMMAND_CHECK`.
 - OTP 29 message names: `EpmdProtocol.EPMD_PORT2_REQ`;
   `EPMD_PORT_PLEASE2_REQ` stays as an alias.
+- Tests: a table of hostile and malformed requests over raw sockets (ports
+  of OTP's `epmd_SUITE`), kill/stop rules, creation cycles, a connection
+  flood, `python -m epmd` with a real node, and nodes of the oldest and
+  newest supported OTP release in one server.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).
