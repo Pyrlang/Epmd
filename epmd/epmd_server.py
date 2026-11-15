@@ -13,15 +13,16 @@
 # limitations under the License.
 import asyncio
 import logging
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Optional
 
+from epmd import epmd_proto_packets as pk
 from epmd.epmd_node import EpmdNode
 
 if TYPE_CHECKING:
     from epmd.epmd_proto import EpmdProtocol
 
-logger = logging.getLogger("epmd.server")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class Epmd:
@@ -31,14 +32,27 @@ class Epmd:
     """
 
     EPMD_DEFAULT_PORT = 4369
+    # Seconds a connection may take to send its request (OTP's default
+    # -packet_timeout, CLOSE_TIMEOUT in epmd_int.h).
+    DEFAULT_PACKET_TIMEOUT = 60.0
 
-    def __init__(self, host: str = "0.0.0.0", port: int = EPMD_DEFAULT_PORT) -> None:
-        """:param port: port to listen on; 0 picks a free one (see ``start``)."""
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = EPMD_DEFAULT_PORT,
+        *,
+        packet_timeout: float = DEFAULT_PACKET_TIMEOUT,
+    ) -> None:
+        """:param port: port to listen on; 0 picks a free one (see ``start``).
+        :param packet_timeout: seconds after which a connection that has not
+            sent a complete request is closed (registered nodes are exempt).
+        """
         self.port = port
         self.host = host
+        self.packet_timeout = packet_timeout
         self.nodes: dict[bytes, EpmdNode] = {}
-        # self.min_version = 5
-        # self.max_version = 6
+        # Unused; kept for compatibility. The reply to ALIVE2_REQ follows the
+        # node's HighestVersion, as in OTP.
         self.supports_protocol_6 = True
         # The listening server between start() and stop().
         self._server: Optional[asyncio.Server] = None
@@ -99,7 +113,7 @@ class Epmd:
     def register(self, node_name: bytes, data: EpmdNode) -> bool:
         """Attempts to register a node. Returns True if successful, False if the node is already registered."""
         if node_name in self.nodes:
-            logger.warning("Node %r already registered", node_name)
+            logger.info("Node %r already registered", node_name)
             return False
         logger.info("Registering node_name=%r", node_name)
         self.nodes[node_name] = data
@@ -112,6 +126,43 @@ class Epmd:
         Removes the node from the list of nodes.
         """
         if node_name in self.nodes:
+            logger.info("Unregistering node_name=%r", node_name)
             del self.nodes[node_name]
             return True
         return False
+
+    def _register_request(
+        self, req: pk.Alive2Req, transport: asyncio.BaseTransport
+    ) -> Optional[EpmdNode]:
+        """Register the node of an ALIVE2_REQ; None if OTP's epmd refuses it
+        (invalid name or Extra, name taken)."""
+        if len(req.name) > pk.MAXSYMLEN:
+            logger.info("Node name too long (%d bytes)", len(req.name))
+            return None
+        chars = pk.name_chars(req.name)
+        if chars < 0 or chars > pk.MAX_NAME_CHARS:
+            logger.info("Node name %r is invalid or too long", req.name)
+            return None
+        if len(req.extra) > pk.MAXSYMLEN:
+            logger.info("Extra too long (%d bytes)", len(req.extra))
+            return None
+        sock = transport.get_extra_info("socket")
+        node = EpmdNode(
+            node_name=req.name,
+            port=req.port,
+            node_type=req.node_type,
+            proto=req.proto,
+            hi_ver=req.hi_ver,
+            lo_ver=req.lo_ver,
+            fd=sock.fileno() if sock is not None else -1,
+        )
+        return node if self.register(req.name, node) else None
+
+    def _unregister_node(self, node: EpmdNode) -> None:
+        """Unregister ``node`` if its name is still registered to it."""
+        if self.nodes.get(node.node_name) is node:
+            self.unregister(node.node_name)
+
+    def _newest_first(self) -> Iterator[EpmdNode]:
+        """Registered nodes, the latest registration first (OTP's order)."""
+        return reversed(list(self.nodes.values()))

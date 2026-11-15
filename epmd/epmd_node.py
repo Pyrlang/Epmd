@@ -22,6 +22,7 @@ class EpmdNode:
         proto: int,
         hi_ver: int,
         lo_ver: int,
+        fd: int = -1,
     ) -> None:
         self.node_name = node_name
         self.port = port
@@ -29,3 +30,5 @@ class EpmdNode:
         self.proto = proto
         self.hi_ver = hi_ver
         self.lo_ver = lo_ver
+        # Socket descriptor of the registering connection, shown by DUMP_REQ.
+        self.fd = fd

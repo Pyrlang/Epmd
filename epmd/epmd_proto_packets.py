@@ -11,136 +11,174 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""EPMD requests and replies as pure functions over ``bytes``.
 
-import logging
-from struct import pack, unpack
-from typing import Any
+Layouts are from ``erl_dist_protocol`` ("EPMD Protocol"); limits and the
+handling of malformed requests follow OTP's ``erts/epmd/src/epmd_srv.c``.
+A request is the body after the 2-byte length prefix. A decoder raises
+``EpmdRequestError`` for a request that OTP's epmd answers by closing the
+connection without a reply.
+"""
 
-from epmd.epmd_node import EpmdNode
-from epmd.errors import EpmdError
+from collections.abc import Iterable
+from dataclasses import dataclass
+from struct import pack, unpack_from
 
-logger = logging.getLogger("epmd.server")
-logger.setLevel(logging.DEBUG)
+from epmd.errors import EpmdRequestError
 
+# Request and reply codes (OTP 29 names, erts/epmd/src/epmd.h).
+EPMD_ALIVE2_REQ = 120  # 'x'
+EPMD_ALIVE2_RESP = 121  # 'y': 16-bit creation, node with HighestVersion < 6
+EPMD_ALIVE2_X_RESP = 118  # 'v': 32-bit creation, since OTP 23
+EPMD_PORT2_REQ = 122  # 'z'
+EPMD_PORT2_RESP = 119  # 'w'
+EPMD_NAMES_REQ = 110  # 'n'
+EPMD_DUMP_REQ = 100  # 'd'
+EPMD_KILL_REQ = 107  # 'k'
+EPMD_STOP_REQ = 115  # 's'
 
-class EpmdAliveReqPacket:
-    # self_addr is a socket.getpeername() result; its shape depends on the
-    # address family, hence Any.
-    def __init__(self, self_addr: tuple[Any, ...], packet: bytes) -> None:
-        """
-        Parse the bytes of the ALIVE2_REQ packet.
-        """
-        logger.debug("Incoming ALIVE2_REQ")
-        if self_addr[0] not in ["127.0.0.1", "localhost"]:
-            raise EpmdError(
-                msg="ALIVE2_REQ must be coming from a local address (got from %s)"
-                % self_addr
-            )
-        if len(packet) < 11:
-            # Assume that node name is at least 1 letter
-            raise EpmdError(msg="ALIVE2_REQ too short")
+# Longest node name or Extra in bytes: 255 characters of up to 4 bytes
+# (MAXSYMLEN in epmd_int.h).
+MAXSYMLEN = 255 * 4
+# Longest node name in characters.
+MAX_NAME_CHARS = 255
+# OTP's receive buffer (INBUF_SIZE); a request whose length prefix plus body
+# does not fit in it closes the connection.
+INBUF_SIZE = 3 * MAXSYMLEN
+# Largest accepted request body (length prefix value).
+MAX_REQUEST_LEN = INBUF_SIZE - 3
 
-        # 120: u8             ALIVE2_REQ
-        # PortNo: u16         node port for incoming requests
-        # NodeType: u8        77 normal Erlang node, 72 hidden node
-        # Protocol: u8        0 - tcp/ip
-        # HighestVersion: u16 The highest distribution protocol version this node can handle. The
-        #                     value in OTP 23 and later is 6. Older nodes only support version 5.
-        # LowestVersion: u16  The lowest distribution version that this node can handle. The value
-        #                     in OTP 25 and later is 6 as support for connections to nodes older
-        #                     than OTP 23 has been dropped
-        # Nlen: u16           The length (in bytes) of field NodeName
-        # NodeName: uint8[]   The name of the node (UTF-8 encoded)
-        # Elen: u16           The length (in bytes) of field Extra
-        # Extra: uint8[]      Extra data
-        port, node_type, proto, hi_ver, lo_ver, n_len = unpack(">HBBHHH", packet[1:11])
-        self.port: int = port
-        self.node_type: int = node_type
-        self.proto: int = proto
-        self.hi_ver: int = hi_ver
-        self.lo_ver: int = lo_ver
-
-        self.n_len: int = n_len
-        index: int = 11 + self.n_len
-        self.node_name: bytes = packet[11:index]
-
-        self.extra_len: int = unpack(">H", packet[index : index + 2])[0]
-        self.extra: bytes = packet[index + 2 :]
+# Fixed part of ALIVE2_REQ before NodeName: code, PortNo, NodeType,
+# Protocol, HighestVersion, LowestVersion, Nlen.
+_ALIVE2_HEAD = ">BHBBHHH"
+_ALIVE2_HEAD_LEN = 11
 
 
-class EpmdAliveRespPacket:
-    EPMD_ALIVE2_RESP = 121  # 16-bit creation response for dist protocol 5
-    EPMD_ALIVE2_X_RESP = 118  # 32-bit creation response for dist protocol 6+
-
-    def __init__(self, success: bool, creation: int, use32bit: bool) -> None:
-        result = 0 if success else 1
-        if use32bit:
-            self.data = pack(
-                ">BBL", EpmdAliveRespPacket.EPMD_ALIVE2_X_RESP, result, creation
-            )
-        else:
-            self.data = pack(
-                ">BBH", EpmdAliveRespPacket.EPMD_ALIVE2_RESP, result, creation % 65536
-            )
+def name_chars(name: bytes) -> int:
+    """Number of characters in a node name, or -1 if it is not valid UTF-8
+    (overlong forms and surrogates are invalid, as in OTP's verify_utf8)."""
+    try:
+        return len(name.decode("utf-8"))
+    except UnicodeDecodeError:
+        return -1
 
 
-class EpmdPortPleaseRespPacket:
-    """Responds to PORT_PLEASE2_REQ with a success and node information."""
+# A parsed ALIVE2_REQ: what a node registers.
+@dataclass(frozen=True)
+class Alive2Req:
+    port: int
+    node_type: int
+    proto: int
+    hi_ver: int
+    lo_ver: int
+    name: bytes
+    extra: bytes
 
-    EPMD_PORT2_RESP = ord("w")  # 119
 
-    def __init__(
-        self,
-        node: EpmdNode,
-    ) -> None:
-        self.data = (
-            pack(
-                ">BBHBBHHH",
-                EpmdPortPleaseRespPacket.EPMD_PORT2_RESP,
-                0,
-                node.port,
-                node.node_type,
-                node.proto,
-                node.hi_ver,
-                node.lo_ver,
-                len(node.node_name),
-            )
-            + node.node_name
+def decode_alive2_req(body: bytes) -> Alive2Req:
+    """Parse an ALIVE2_REQ body. Bytes after ``Extra`` are ignored.
+
+    :raises EpmdRequestError: too short, a length field beyond the end, or a
+        NUL byte in the name (OTP closes the connection without a reply).
+    """
+    # At least one byte of node name plus the 2-byte Elen.
+    if len(body) <= _ALIVE2_HEAD_LEN + 2:
+        raise EpmdRequestError("ALIVE2_REQ too short (%d bytes)" % len(body))
+    _, port, node_type, proto, hi_ver, lo_ver, nlen = unpack_from(_ALIVE2_HEAD, body)
+    if _ALIVE2_HEAD_LEN + nlen + 2 > len(body):
+        raise EpmdRequestError("ALIVE2_REQ node name length %d too large" % nlen)
+    name = body[_ALIVE2_HEAD_LEN : _ALIVE2_HEAD_LEN + nlen]
+    extra_at = _ALIVE2_HEAD_LEN + nlen + 2
+    (elen,) = unpack_from(">H", body, extra_at - 2)
+    if extra_at + elen > len(body):
+        raise EpmdRequestError("ALIVE2_REQ extra length %d too large" % elen)
+    if b"\0" in name:
+        raise EpmdRequestError("ALIVE2_REQ node name contains a NUL byte")
+    return Alive2Req(
+        port=port,
+        node_type=node_type,
+        proto=proto,
+        hi_ver=hi_ver,
+        lo_ver=lo_ver,
+        name=name,
+        extra=body[extra_at : extra_at + elen],
+    )
+
+
+def encode_alive2_resp(ok: bool, creation: int, hi_ver: int) -> bytes:
+    """ALIVE2_X_RESP (32-bit creation) to a node with HighestVersion >= 6,
+    else ALIVE2_RESP (16-bit creation)."""
+    result = 0 if ok else 1
+    if hi_ver >= 6:
+        return pack(">BBI", EPMD_ALIVE2_X_RESP, result, creation & 0xFFFFFFFF)
+    return pack(">BBH", EPMD_ALIVE2_RESP, result, creation & 0xFFFF)
+
+
+def decode_port2_req(body: bytes) -> bytes:
+    """The node name asked for in a PORT2_REQ body. One trailing NUL is
+    dropped, as old clients send it.
+
+    :raises EpmdRequestError: empty name, a NUL inside it, invalid UTF-8 or
+        more than 255 characters (OTP closes without a reply).
+    """
+    name = body[1:]
+    if name.endswith(b"\0"):
+        name = name[:-1]
+    if not name:
+        raise EpmdRequestError("PORT2_REQ without a node name")
+    if b"\0" in name:
+        raise EpmdRequestError("PORT2_REQ node name contains a NUL byte")
+    if not 1 <= name_chars(name) <= MAX_NAME_CHARS:
+        raise EpmdRequestError("PORT2_REQ node name is invalid")
+    return name
+
+
+# What a PORT2_RESP describes: one registered node.
+@dataclass(frozen=True)
+class Port2Info:
+    port: int
+    node_type: int
+    proto: int
+    hi_ver: int
+    lo_ver: int
+    name: bytes
+
+
+def encode_port2_resp(node: Port2Info | None) -> bytes:
+    """PORT2_RESP: the node's entry, or result 1 if it is not registered."""
+    if node is None:
+        return pack(">BB", EPMD_PORT2_RESP, 1)
+    return (
+        pack(
+            ">BBHBBHHH",
+            EPMD_PORT2_RESP,
+            0,
+            node.port,
+            node.node_type,
+            node.proto,
+            node.hi_ver,
+            node.lo_ver,
+            len(node.name),
         )
+        + node.name
+    )
 
 
-class EpmdPortPleaseErrorPacket:
-    """Responds to PORT_PLEASE2_REQ with an error."""
-
-    EPMD_PORT2_RESP = ord("w")  # 119
-
-    def __init__(self) -> None:
-        self.data = pack(">BB", EpmdPortPleaseErrorPacket.EPMD_PORT2_RESP, 1)
+def encode_names_resp(epmd_port: int, nodes: Iterable[tuple[bytes, int]]) -> bytes:
+    """NAMES_RESP: EPMDPortNo:32, then ``name N at port P\\n`` per
+    ``(name, port)``. Parsed by ``erl_epmd``; keep the text exact."""
+    lines = b"".join(b"name %s at port %d\n" % (n, p) for n, p in nodes)
+    return pack(">I", epmd_port) + lines
 
 
-class EpmdNamesRespPacket:
-    """Responds to NAMES_REQ with a list of registered node names."""
-
-    def __init__(self, server_port: int, nodes: dict[bytes, EpmdNode]) -> None:
-        response_text = ""
-        for node_name, node in nodes.items():
-            # Each node is described by a string formatted like:
-            # io:format("name ~ts at port ~p~n", [NodeName, Port]).
-            response_text += f"name {node_name.decode('utf-8')} at port {node.port}\n"
-
-        logger.debug("Names response: %s", response_text)
-
-        self.data = pack(">L", server_port) + response_text.encode("utf-8")
-
-
-class EpmdDumpRespPacket:
-    """Responds to DUMP_REQ with a list of registered node names."""
-
-    def __init__(self, server_port: int, nodes: dict[bytes, EpmdNode]) -> None:
-        response_text = ""
-        for node_name, node in nodes.items():
-            # io_lib:format("active name     ~ts at port ~p, fd = ~p~n", [NodeName, Port, Fd]).
-            # io_lib:format("old/unused name ~ts at port ~p, fd = ~p ~n", [NodeName, Port, Fd]).
-            response_text += f"active name     {node_name.decode('utf-8')} at port {node.port}, fd = {0}\n"
-
-        self.data = pack(">L", server_port) + response_text.encode("utf-8")
+def encode_dump_resp(
+    epmd_port: int,
+    active: Iterable[tuple[bytes, int, int]],
+    old: Iterable[tuple[bytes, int, int]],
+) -> bytes:
+    """DUMP_RESP: EPMDPortNo:32, then one NUL-terminated line per
+    ``(name, port, fd)``: registered nodes, then names kept from earlier
+    registrations. The text, the NULs included, is what OTP's epmd sends."""
+    lines = [b"active name     <%s> at port %d, fd = %d\n\0" % a for a in active]
+    lines += [b"old/unused name <%s>, port = %d, fd = %d \n\0" % o for o in old]
+    return pack(">I", epmd_port) + b"".join(lines)
