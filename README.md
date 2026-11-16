@@ -6,14 +6,35 @@ pip install .
 ```
 
 ## Give A Quick Try
-Please check [try_pyepmd.py](try_pyepmd.py) for a quick usage detail. The script starts a `epmd` server written in this package and listens at the given port.
+[examples/run_epmd.py](examples/run_epmd.py) starts the server on the given port:
 
-```sh
+```python
+import asyncio
+
 from epmd import Epmd
 
 # use a custom EPMD port to not interfere with a regular EPMD possibly running
 server = Epmd(port=4370) 
 asyncio.run(server.start_server())
+```
+
+To run it next to other asyncio code, `await server.start()` returns once the
+server listens (`Epmd(port=0)` picks a free port, then `server.port` has it)
+and `await server.stop()` shuts it down.
+
+`Epmd()` listens on every IPv4 and IPv6 address. `Epmd(host="127.0.0.1")`
+listens on that address only; `Epmd(addresses=["10.0.0.5"])` listens there
+and on the loopback addresses, as OTP's epmd does with `ERL_EPMD_ADDRESS`.
+Other options: `packet_timeout`, `max_connections`, `relaxed_command_check`
+(see the `Epmd` docstring). Behaviour that differs from OTP's epmd is listed
+in [KNOWN-DIFFERENCES.md](KNOWN-DIFFERENCES.md).
+
+From the command line, configured like OTP's `epmd` through
+`ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS` and `ERL_EPMD_RELAXED_COMMAND_CHECK`,
+or options (`python -m epmd --help`):
+
+```sh
+python -m epmd --port 4370 --address 127.0.0.1
 ```
 
 Now, use your erlang module with the custom epmd started (running at port 4370) above by:
@@ -41,6 +62,11 @@ Example:
     (a@127.0.0.1)1> net_adm:ping('b@127.0.0.1').
     ```
 
-## Ackhowledgements
+## Documentation
+
+Usage, the API reference and the known differences from OTP's `epmd`:
+https://pyrlang.clau.se/epmd/
+
+## Acknowledgements
 
 Thanks to Amit Garu (amitgaru2@gmail.com) for contributing the initial version of Epmd.

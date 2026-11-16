@@ -11,13 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Exceptions of the ``epmd`` package."""
 
-import logging
-
-LOG = logging.getLogger("epmd")
+from typing import Any
 
 
 class EpmdError(Exception):
-    def __init__(self, msg, *args, **kwargs):
-        LOG.error("EPMD error: %s", msg)
+    """Base class of every error the ``epmd`` package raises."""
+
+    # Extra arguments are passed through to Exception unchanged, hence Any.
+    def __init__(self, msg: str, *args: Any, **kwargs: Any) -> None:
         Exception.__init__(self, msg, *args, **kwargs)
+
+
+class EpmdRequestError(EpmdError):
+    """A request a client sent cannot be parsed; the server closes that
+    connection without a reply, as OTP's epmd does."""
