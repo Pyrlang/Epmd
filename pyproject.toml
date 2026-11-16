@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "epmd"
-version = "1.0.0"
+version = "2.0.0"
 description = "Erlang Port Mapper Daemon in Python/Asyncio"
 readme = "README.md"
 license = { file = "LICENSE" }

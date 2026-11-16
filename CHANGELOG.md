@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0 (2026-11-16)
 
 - Documentation: a Sphinx site of its own (`docs-src/`; build with
   `pip install -e . --group docs` and `python -m sphinx -W --keep-going -b
