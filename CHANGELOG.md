@@ -7,8 +7,9 @@
   port, readable as `.port` afterwards); `Epmd.stop()` stops listening and
   closes client connections, and is safe to call twice. `start_server()`
   still serves until cancelled.
-- Tests: real Erlang/OTP nodes register in, and find each other through, the
-  Python EPMD (`pytest`; `-m erlang` needs Erlang/OTP).
+- Tests with real Erlang/OTP nodes are the interop suite of `pyrlang`, run
+  on this server (`pytest --epmd=python` there); the tests here need no
+  Erlang.
 - Requests are handled as OTP's epmd does: one request per connection;
   malformed, unknown, oversized (body above 3057 bytes) or pipelined
   requests close the connection without a reply and never raise out of the
@@ -50,8 +51,7 @@
   `EPMD_PORT_PLEASE2_REQ` stays as an alias.
 - Tests: a table of hostile and malformed requests over raw sockets (ports
   of OTP's `epmd_SUITE`), kill/stop rules, creation cycles, a connection
-  flood, `python -m epmd` with a real node, and nodes of the oldest and
-  newest supported OTP release in one server.
+  flood, and `python -m epmd`.
 - `NAMES_RESP` and `DUMP_RESP` list the newest registration first;
   `DUMP_RESP` uses OTP's text (`active name     <N> at port P, fd = F`, NUL
   after each line).

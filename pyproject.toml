@@ -33,9 +33,6 @@ packages = ["epmd"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
-markers = [
-    "erlang: needs real Erlang/OTP nodes (test/conftest.py; run in WSL for the release matrix)",
-]
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.black]

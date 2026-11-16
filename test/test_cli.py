@@ -1,17 +1,17 @@
-"""Where the server listens: IPv6 loopback, and ``python -m epmd``
-configured through OTP's environment variables, serving a real node."""
+"""Where the server listens: a free port, IPv6 loopback, and ``python -m
+epmd`` configured through OTP's environment variables."""
 
 import asyncio
 import os
-import re
 import socket
+import struct
 import subprocess
 import sys
 import time
 from collections.abc import Iterator
 
 import pytest
-from conftest import TIMEOUT, ErlNode, Otp, alive2_req, epmd_request, register
+from conftest import TIMEOUT, alive2_req, epmd_request, register
 
 from epmd import Epmd
 
@@ -77,16 +77,32 @@ def epmd_process() -> Iterator[int]:
         proc.communicate(timeout=TIMEOUT)
 
 
-@pytest.mark.erlang
 @pytest.mark.asyncio
-async def test_python_m_epmd_serves_erl(otp: Otp, epmd_process: int) -> None:
-    """An ``erl`` node with ERL_EPMD_PORT set registers in ``python -m
-    epmd`` started with the same variable, and is listed by it."""
-    node = ErlNode(otp, epmd_process)
+async def test_python_m_epmd(epmd_process: int) -> None:
+    """``python -m epmd`` listens where ERL_EPMD_PORT says: a name registered
+    there is found there. (Real nodes are served by the same server class in
+    the pyrlang interop suite.)"""
+    node = await register(epmd_process, alive2_req(b"cli", port=4711))
     try:
-        assert await node.eval("node().") == "'%s'" % node.name, node.log()
-        names = await node.eval("net_adm:names('127.0.0.1').")
-        short = node.name.split("@")[0]
-        assert re.fullmatch(r'\{ok,\[\{"%s",\d+\}\]\}' % short, names), names
+        assert node.reply[:2] == b"y\x00", node.reply
+        found = await epmd_request(epmd_process, b"zcli")
+        assert found[:4] == b"w\x00" + struct.pack(">H", 4711), found
     finally:
-        await node.stop()
+        await node.close()
+
+
+@pytest.mark.asyncio
+async def test_start_on_port_0_and_stop() -> None:
+    """``start`` returns once listening on a free port; ``stop`` closes it
+    and may be called twice."""
+    server = Epmd(host="127.0.0.1", port=0)
+    await server.start()
+    try:
+        assert server.port != 0
+        reply = await epmd_request(server.port, b"n")  # NAMES_REQ
+        assert reply == struct.pack(">I", server.port)  # no names yet
+    finally:
+        await server.stop()
+    await server.stop()
+    with pytest.raises(OSError):
+        await epmd_request(server.port, b"n")

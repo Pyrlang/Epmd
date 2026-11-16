@@ -4,7 +4,7 @@ One table: what a client sends, and everything the server writes before it
 closes the connection (``b""``: closed without a reply). Rows are ports of
 ``epmd_SUITE`` cases (OTP's ``erts/epmd/test``) and are named after them.
 Behaviour that real nodes show (register, look up, list) is tested with real
-nodes in ``test_epmd_server.py`` and in the pyrlang interop suite.
+nodes by the pyrlang interop suite run on this server (``--epmd=python``).
 """
 
 import asyncio
