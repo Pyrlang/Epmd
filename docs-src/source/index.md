@@ -8,8 +8,8 @@ nothing outside the standard library.
 
 It is one of three projects that work together and can be used apart:
 
-- [Pyrlang]({{ pyrlang_url }}): an Erlang node in Python.
-- [Term]({{ term_url }}): Erlang terms and the External Term Format codec.
+- {{ pyrlang_site }}: an Erlang node in Python.
+- {{ term_site }}: Erlang terms and the External Term Format codec.
 - Epmd: this project.
 
 ## Installing
