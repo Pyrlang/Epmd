@@ -22,7 +22,9 @@ from epmd.epmd_node import EpmdNode
 from epmd.errors import EpmdRequestError
 
 if TYPE_CHECKING:
-    from epmd.epmd_server import Epmd
+    # By module, so that the documentation can tell this class from its
+    # re-export epmd.Epmd.
+    from epmd import epmd_server
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +50,8 @@ class EpmdProtocol(asyncio.Protocol):
     ALIVE_NORMAL_NODE_TYPE = 77  # M: normal Erlang node
     ALIVE_HIDDEN_NODE_TYPE = 72  # H: hidden node
 
-    def __init__(self, parent: "Epmd") -> None:
-        self.parent: Epmd = parent
+    def __init__(self, parent: "epmd_server.Epmd") -> None:
+        self.parent: epmd_server.Epmd = parent
         # asyncio calls connection_made before any data_received, so the
         # handlers never see None here.
         self.transport: asyncio.Transport = None  # type: ignore[assignment]  # set in connection_made

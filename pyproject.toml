@@ -25,6 +25,16 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "black", "isort", "mypy"]
 
+# Builds the documentation (docs-src/): `pip install -e . --group docs`.
+# A dependency group, not an extra: users of the package never install it.
+[dependency-groups]
+docs = [
+    "sphinx==9.2.0",
+    "furo==2025.12.19",
+    "myst-parser==5.2.0",
+    "sphinx-copybutton==0.5.2",
+]
+
 [project.urls]
 Homepage = "http://pyrlang.readthedocs.io/"
 

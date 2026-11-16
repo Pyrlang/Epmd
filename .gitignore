@@ -102,3 +102,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Documentation build (python -m sphinx ... docs-src/build/html)
+/docs-src/build
+/docs-src/source/reference

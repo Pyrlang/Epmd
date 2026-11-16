@@ -6,9 +6,11 @@ pip install .
 ```
 
 ## Give A Quick Try
-Please check [try_pyepmd.py](try_pyepmd.py) for a quick usage detail. The script starts a `epmd` server written in this package and listens at the given port.
+[examples/run_epmd.py](examples/run_epmd.py) starts the server on the given port:
 
-```sh
+```python
+import asyncio
+
 from epmd import Epmd
 
 # use a custom EPMD port to not interfere with a regular EPMD possibly running

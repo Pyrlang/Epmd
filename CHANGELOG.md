@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Documentation: a Sphinx site of its own (`docs-src/`; build with
+  `pip install -e . --group docs` and `python -m sphinx -W --keep-going -b
+  html docs-src/source docs-src/build/html`). `try_pyepmd.py` became
+  `examples/run_epmd.py`; `requirements.txt` is gone.
 - Packaging moved from `setup.py` to `pyproject.toml`; Python 3.11 or newer.
 - `Epmd.start()` returns once the server listens (`Epmd(port=0)` picks a free
   port, readable as `.port` afterwards); `Epmd.stop()` stops listening and
