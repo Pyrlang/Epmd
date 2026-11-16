@@ -7,8 +7,9 @@ installed and the ``docs`` dependency group::
 """
 
 import os
+import tomllib
 from datetime import date
-from importlib import metadata
+from pathlib import Path
 
 # Where the Pyrlang sites are published, one directory per project
 # (``/pyrlang/``, ``/term/``, ``/epmd/``). ``PYRLANG_DOCS_BASE_URL`` overrides
@@ -20,7 +21,10 @@ DOCS_BASE_URL: str = os.environ.get(
 project = "Epmd"
 author = "Amit Garu, Dmytro Lytovchenko, Johan Sommerfeld"
 copyright = "2019-%d, Erlang Solutions Ltd., S2HC Sweden AB" % date.today().year
-release = metadata.version("epmd")
+# The version of the sources being documented: an editable install keeps
+# the metadata of the version it was installed at.
+_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+release = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
 version = release
 language = "en"
 
