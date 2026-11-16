@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""One client connection of the server."""
+
 import asyncio
 import ipaddress
 import logging
@@ -72,6 +74,8 @@ class EpmdProtocol(asyncio.Protocol):
         self.local_peer: bool = False
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
+        """The client closed the connection: a node registered on it is
+        unregistered."""
         logger.debug("Disconnected %s", self.addr)
         self._cancel_timer()
         self.parent._disconnected(self)
@@ -109,6 +113,8 @@ class EpmdProtocol(asyncio.Protocol):
             self.timer_ = None
 
     def data_received(self, data: bytes) -> None:
+        """Collect the client's bytes; answer once the one request of the
+        connection is complete."""
         if self.node_ is not None:
             # A registered node sends nothing more; OTP treats any data as
             # the end of the registration.

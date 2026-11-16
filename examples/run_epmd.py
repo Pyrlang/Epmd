@@ -6,6 +6,7 @@ Erlang nodes use it when they are started with the same port:
 
 import asyncio
 import logging
+import sys
 
 from epmd import Epmd
 
@@ -18,4 +19,4 @@ def main(port: int = 4370) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(*(int(arg) for arg in sys.argv[1:2]))

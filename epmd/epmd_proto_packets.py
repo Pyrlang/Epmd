@@ -63,9 +63,10 @@ def name_chars(name: bytes) -> int:
         return -1
 
 
-# A parsed ALIVE2_REQ: what a node registers.
 @dataclass(frozen=True)
 class Alive2Req:
+    """A parsed ``ALIVE2_REQ``: what a node registers."""
+
     port: int
     node_type: int
     proto: int
@@ -133,9 +134,10 @@ def decode_port2_req(body: bytes) -> bytes:
     return name
 
 
-# What a PORT2_RESP describes: one registered node.
 @dataclass(frozen=True)
 class Port2Info:
+    """What a ``PORT2_RESP`` describes: one registered node."""
+
     port: int
     node_type: int
     proto: int

@@ -62,6 +62,11 @@ Example:
     (a@127.0.0.1)1> net_adm:ping('b@127.0.0.1').
     ```
 
-## Ackhowledgements
+## Documentation
+
+Usage, the API reference and the known differences from OTP's `epmd`:
+https://pyrlang.github.io/epmd/
+
+## Acknowledgements
 
 Thanks to Amit Garu (amitgaru2@gmail.com) for contributing the initial version of Epmd.

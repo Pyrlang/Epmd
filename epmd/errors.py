@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Exceptions of the ``epmd`` package."""
 
 from typing import Any
 
@@ -23,7 +24,6 @@ class EpmdError(Exception):
         Exception.__init__(self, msg, *args, **kwargs)
 
 
-# A request a client sent cannot be parsed; the server closes that
-# connection without a reply, as OTP's epmd does.
 class EpmdRequestError(EpmdError):
-    pass
+    """A request a client sent cannot be parsed; the server closes that
+    connection without a reply, as OTP's epmd does."""

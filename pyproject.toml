@@ -36,7 +36,8 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "http://pyrlang.readthedocs.io/"
+Homepage = "https://github.com/Pyrlang/Epmd/"
+Documentation = "https://pyrlang.github.io/epmd/"
 
 [tool.setuptools]
 packages = ["epmd"]
