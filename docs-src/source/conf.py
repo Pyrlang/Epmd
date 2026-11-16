@@ -14,7 +14,7 @@ from importlib import metadata
 # (``/pyrlang/``, ``/term/``, ``/epmd/``). ``PYRLANG_DOCS_BASE_URL`` overrides
 # it for a staging host.
 DOCS_BASE_URL: str = os.environ.get(
-    "PYRLANG_DOCS_BASE_URL", "https://pyrlang.github.io"
+    "PYRLANG_DOCS_BASE_URL", "https://pyrlang.clau.se"
 ).rstrip("/")
 
 project = "Epmd"

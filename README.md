@@ -65,7 +65,7 @@ Example:
 ## Documentation
 
 Usage, the API reference and the known differences from OTP's `epmd`:
-https://pyrlang.github.io/epmd/
+https://pyrlang.clau.se/epmd/
 
 ## Acknowledgements
 

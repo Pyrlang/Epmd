@@ -7,7 +7,7 @@
   html docs-src/source docs-src/build/html`). `try_pyepmd.py` became
   `examples/run_epmd.py`; `requirements.txt` is gone. The examples on
   the pages are files in `examples/` that the tests run. The site moves
-  to https://pyrlang.github.io/epmd/.
+  to https://pyrlang.clau.se/epmd/.
 - Packaging moved from `setup.py` to `pyproject.toml`; Python 3.11 or newer.
 - `Epmd.start()` returns once the server listens (`Epmd(port=0)` picks a free
   port, readable as `.port` afterwards); `Epmd.stop()` stops listening and
